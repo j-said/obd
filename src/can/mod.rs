@@ -3,6 +3,11 @@
 //! Ціль: Надати потокобезпечний асинхронний інтерфейс до периферії TWAI
 //! для спільного використання різними підсистемами (Scanner, WiFi, BLE).
 
+pub mod config;
+pub mod discovery;
+pub mod iso_tp;
+pub mod obd2;
+
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
 use esp_hal::Async;
@@ -28,7 +33,7 @@ impl<'a> CanManager<'a> {
         // Тут відновлення складніше, бо ми не володіємо "цілим" драйвером.
         // У esp-hal v1.0 split-частини не мають методу .recover(),
         // тому "fail-fast" логіку треба робити обережніше або перезапускати драйвер зовні.
-        
+
         let mut tx = self.tx.lock().await;
         tx.transmit_async(frame).await
     }

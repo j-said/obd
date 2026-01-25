@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicBool, Ordering};
+use portable_atomic::{AtomicBool, Ordering};
 
 /// false = 11-bit (Standard), true = 29-bit (Extended)
 static IS_EXTENDED: AtomicBool = AtomicBool::new(false);
