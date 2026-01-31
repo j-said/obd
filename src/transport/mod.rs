@@ -5,19 +5,21 @@
 /// Відповідає рівню L4 (Transport Layer) моделі OSI.
 
 pub mod ble;
+
 pub trait TransportAdapter {
+    ///! Абстракція
+
     type Error;
 
-    /// Очікування встановлення з'єднання (наприклад, підключення BLE клієнта).
+    /// Очікування встановлення з'єднання
     async fn wait_for_connection(&mut self) -> Result<(), Self::Error>;
 
-    /// Читання вхідних даних (наприклад, отримання GATT Write).
-    /// Повертає кількість прочитаних байт.
+    /// Повертає кількість прочитаних байт
     async fn read(&mut self, buffer: &mut [u8]) -> Result<usize, Self::Error>;
 
-    /// Відправка даних (наприклад, через GATT Notify).
+    /// Відправка даних
     async fn write(&mut self, data: &[u8]) -> Result<(), Self::Error>;
 
-    /// Перевірка статусу з'єднання.
+    /// Перевірка статусу з'єднання
     fn is_connected(&self) -> bool;
 }
