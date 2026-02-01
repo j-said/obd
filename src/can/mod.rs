@@ -11,6 +11,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
 use embedded_can::Frame;
+
 use esp_hal::Async;
 use esp_hal::twai::{EspTwaiFrame, TwaiRx, TwaiTx};
 
@@ -21,6 +22,7 @@ pub use obd2::Obd2Service;
 /// --- Абстракція  ---
 ///
 ///! D::Frame дозволяє використовувати EspTwaiFrame, Stm32CanFrame або MockFrame.
+#[trait_variant::make(AsyncCanDriverSend: Send)]
 pub trait AsyncCanDriver {
     type Frame: Frame;
     /// Note: Будь-який тип, що реалізує embedded_can::Frame
@@ -61,6 +63,7 @@ impl<'a> CanManager<'a> {
         Self { tx, rx }
     }
 }
+
 
 impl<'a> AsyncCanDriver for CanManager<'a> {
     type Frame = EspTwaiFrame;
