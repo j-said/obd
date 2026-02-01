@@ -1,18 +1,19 @@
-//! Модуль Application layer OBD2
-//!
-//! Відповідає за бізнес-логіку діагностики: які байти відправити (PID)
-//! та як інтерпретувати отримані дані (наприклад, парсинг VIN).
-//! Вся транспортна магія (адресація, Flow Control) схована в IsoTpHandler.
-
+///! Модуль Application layer OBD2
+///!
+///! Generic implementation.
+///! Відповідає за бізнес-логіку діагностики: які байти відправити (PID)
+///! та як інтерпретувати отримані дані (наприклад, парсинг VIN).
+///! Вся транспортна магія (адресація, Flow Control) схована в IsoTpHandler.
+use super::AsyncCanDriver;
 use super::iso_tp::{EcuResponse, IsoTpError, IsoTpHandler};
 use heapless::Vec;
 
-pub struct Obd2Service<'a> {
-    tp: IsoTpHandler<'a>,
+pub struct Obd2Service<D> {
+    tp: IsoTpHandler<D>,
 }
 
-impl<'a> Obd2Service<'a> {
-    pub fn new(tp: IsoTpHandler<'a>) -> Self {
+impl<D: AsyncCanDriver> Obd2Service<D> {
+    pub fn new(tp: IsoTpHandler<D>) -> Self {
         Self { tp }
     }
 
@@ -32,7 +33,7 @@ impl<'a> Obd2Service<'a> {
     pub async fn get_vin(&self, ecu_id: u32) -> Result<Vec<u8, 64>, IsoTpError> {
         // Формуємо запит Service 09, PID 02
         let raw = self.tp.send_physical_request(ecu_id, &[0x09, 0x02]).await?;
-        
+
         // Парсинг відповіді.
         // Очікуваний формат відповіді (позитивний): [0x49, 0x02, 0x01 (count), VIN bytes...]
         // Ми пропускаємо перші 3 байти заголовків.
