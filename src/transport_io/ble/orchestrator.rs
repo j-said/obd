@@ -23,7 +23,7 @@ impl<'a, C: Controller> BleOrchestrator<'a, C> {
         }
     }
 
-    pub async fn run(&mut self) -> Result<(), BleError> {
+    pub async fn run(&self) -> Result<(), BleError> {
         loop {
             let mut ad_buf = [0u8; 31];
             let advertisement = create_advertisement(&mut ad_buf)?;
@@ -32,7 +32,7 @@ impl<'a, C: Controller> BleOrchestrator<'a, C> {
             let conn = {
                 let mut peripheral = self.stack.build().peripheral;
 
-                #[allow(unused_mut)] // TODO: check if has to be mutable
+                // #[allow(unused_mut)] // TODO: check if has to be mutable
                 let mut advertiser = peripheral
                     .advertise(&params, advertisement)
                     .await
@@ -52,7 +52,7 @@ impl<'a, C: Controller> BleOrchestrator<'a, C> {
         &self,
         conn: &Connection<'_, super::types::MyPacketPool>,
     ) -> Result<(), BleError> {
-        #[allow(unused_mut)] // TODO: check if has to be mutable
+        // #[allow(unused_mut)] // TODO: check if has to be mutable
         let mut l2cap = trouble_host::l2cap::L2capChannel::accept(
             self.stack,
             conn,

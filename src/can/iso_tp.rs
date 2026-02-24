@@ -171,7 +171,8 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
                     }
                     Some(PciType::ConsecutiveFrame) => {
                         if (d[0] & 0x0F) != next_sn {
-                            return Err(IsoTpError::InvalidSequence);
+                            continue;
+                            // return Err(IsoTpError::InvalidSequence);
                         }
                         let to_copy = core::cmp::min(expected_len - full_data.len(), 7);
                         full_data.extend_from_slice(&d[1..1 + to_copy]).ok();
