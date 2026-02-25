@@ -1,17 +1,16 @@
 // TODO: Пізніше мігрувати до transport_io::mod, як абстракція для бізнес логіки
-use super::error::BleError;
-use super::types::{BleChannel, BlePacket, MTU_SIZE};
+use super::{BleError, BleChannel, BlePacket, MTU_SIZE};
 use embedded_io_async::{ErrorType, Read, Write};
 
-pub struct BleStream<'a> {
-    rx: &'a BleChannel,
-    tx: &'a BleChannel,
+pub struct BleStream {
+    rx: &'static BleChannel,
+    tx: &'static BleChannel,
     store: BlePacket,
     store_offset: usize,
 }
 
-impl<'a> BleStream<'a> {
-    pub fn new(rx: &'a BleChannel, tx: &'a BleChannel) -> Self {
+impl BleStream {
+    pub fn new(rx: &'static BleChannel, tx: &'static BleChannel) -> Self {
         Self {
             rx,
             tx,
@@ -21,18 +20,18 @@ impl<'a> BleStream<'a> {
     }
 }
 
-impl ErrorType for BleStream<'_> {
+impl ErrorType for BleStream {
     type Error = BleError;
 }
 
-impl Read for BleStream<'_> {
+impl Read for BleStream {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
         if buf.is_empty() {
             return Ok(0);
         }
 
         // Якщо внутрішній буфер вичитано, чекаємо новий пакет
-        if self.store_offset >= self.store.len() {
+        if self.store.is_empty() || self.store_offset >= self.store.len() {
             self.store = self.rx.receive().await;
             self.store_offset = 0;
         }
@@ -43,14 +42,24 @@ impl Read for BleStream<'_> {
         buf[..to_copy].copy_from_slice(&self.store[self.store_offset..self.store_offset + to_copy]);
         self.store_offset += to_copy;
 
+        if self.store_offset >= self.store.len() {
+            self.store.clear();
+            self.store_offset = 0;
+        }
+
         Ok(to_copy)
     }
 }
 
-impl Write for BleStream<'_> {
+impl Write for BleStream {
     async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+
         let mut offset = 0;
 
+        // Фрагментація великих масивів під MTU радіоканалу
         while offset < buf.len() {
             let chunk_size = core::cmp::min(buf.len() - offset, MTU_SIZE);
             let mut packet = BlePacket::new();

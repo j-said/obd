@@ -22,7 +22,7 @@ pub use obd2::Obd2Service;
 /// --- Абстракція  ---
 ///
 /// D::Frame дозволяє використовувати EspTwaiFrame, Stm32CanFrame або MockFrame.
-#[trait_variant::make(AsyncCanDriverSend: Send)]
+#[allow(async_fn_in_trait)]
 pub trait AsyncCanDriver {
     type Frame: Frame;
     /// Note: Будь-який тип, що реалізує embedded_can::Frame
@@ -63,7 +63,6 @@ impl<'a> CanManager<'a> {
         Self { tx, rx }
     }
 }
-
 
 impl<'a> AsyncCanDriver for CanManager<'a> {
     type Frame = EspTwaiFrame;
