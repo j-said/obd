@@ -1,9 +1,3 @@
-/// Модуль керування CAN-шиною.
-///
-/// Містить абстракцію AsyncCanDriver та реалізацію для ESP32.
-/// Цей модуль виступає шлюзом до апаратного забезпечення. Він зберігає
-/// глобальний стан конфігурації (Standard/Extended) та надає безпечний
-/// доступ до шини через EspCanManager.
 pub mod iso_tp;
 pub mod obd2;
 
@@ -15,31 +9,23 @@ use embedded_can::Frame;
 use esp_hal::Async;
 use esp_hal::twai::{EspTwaiFrame, TwaiRx, TwaiTx};
 
-/// --- Re-exports для зручності ---
 pub use iso_tp::IsoTpHandler;
 pub use obd2::Obd2Service;
 
-/// --- Абстракція  ---
-///
-/// D::Frame дозволяє використовувати EspTwaiFrame, Stm32CanFrame або MockFrame.
 #[allow(async_fn_in_trait)]
 pub trait AsyncCanDriver {
     type Frame: Frame;
-    /// Note: Будь-який тип, що реалізує embedded_can::Frame
+    // Note: Будь-який тип, що реалізує embedded_can::Frame
     type Error: core::fmt::Debug;
 
     async fn transmit(&self, frame: &Self::Frame) -> Result<(), Self::Error>;
     async fn receive(&self) -> Result<Self::Frame, Self::Error>;
 }
 
-/// --- Глобальна конфігурація ---
-///
-/// Глобальний прапорець режиму адресації.
-/// false = Standard ID (11-bit)
-/// true = Extended ID (29-bit)
+// false = Standard ID (11-bit)
+// true  = Extended ID (29-bit)
 pub static IS_EXTENDED: AtomicBool = AtomicBool::new(false);
 
-/// Helper funcs
 #[inline(always)]
 pub fn is_extended() -> bool {
     IS_EXTENDED.load(Ordering::Relaxed)

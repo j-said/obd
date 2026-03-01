@@ -2,7 +2,7 @@ pub mod protocol;
 
 use crate::can::{AsyncCanDriver, Obd2Service, obd2::ECU_ENGINE_TX_ID};
 use embedded_io_async::{Read, Write};
-use protocol::{Command, Request, Response};
+use protocol::{Command, DebugMsg, Request, Response, Status};
 
 pub async fn handle_client<S, D>(mut stream: S, obd_service: &Obd2Service<D>)
 where
@@ -28,7 +28,7 @@ where
                     Ok(vin) => serde_json_core::to_slice(
                         &Response {
                             id,
-                            status: "OK",
+                            status: Status::Ok,
                             data: Some(&*vin),
                             debug: None,
                         },
@@ -37,9 +37,9 @@ where
                     Err(_) => serde_json_core::to_slice(
                         &Response::<()> {
                             id,
-                            status: "ERROR",
+                            status: Status::Error,
                             data: None,
-                            debug: Some("OBD Timeout"),
+                            debug: Some(DebugMsg::ObdTimeout),
                         },
                         &mut out_buf,
                     ),
@@ -49,7 +49,7 @@ where
                     Ok(data) => serde_json_core::to_slice(
                         &Response {
                             id,
-                            status: "OK",
+                            status: Status::Ok,
                             data: Some(&data),
                             debug: None,
                         },
@@ -58,9 +58,9 @@ where
                     Err(_) => serde_json_core::to_slice(
                         &Response::<()> {
                             id,
-                            status: "ERROR",
+                            status: Status::Error,
                             data: None,
-                            debug: Some("LiveData Failed"),
+                            debug: Some(DebugMsg::LiveDataFailed),
                         },
                         &mut out_buf,
                     ),
@@ -70,54 +70,13 @@ where
                     serde_json_core::to_slice(
                         &Response::<()> {
                             id,
-                            status: "OK",
+                            status: Status::Ok,
                             data: None,
                             debug: None,
                         },
                         &mut out_buf,
                     )
                 }
-                Command::GetStoredDtcs => match obd_service.get_stored_dtcs().await {
-                    Ok(data) => serde_json_core::to_slice(
-                        &Response {
-                            id,
-                            status: "OK",
-                            data: Some(&data),
-                            debug: None,
-                        },
-                        &mut out_buf,
-                    ),
-                    Err(_) => serde_json_core::to_slice(
-                        &Response::<()> {
-                            id,
-                            status: "ERROR",
-                            data: None,
-                            debug: Some("Get DTC Failed"),
-                        },
-                        &mut out_buf,
-                    ),
-                },
-                Command::GetPendingDtcs => match obd_service.get_pending_dtcs().await {
-                    Ok(data) => serde_json_core::to_slice(
-                        &Response {
-                            id,
-                            status: "OK",
-                            data: Some(&data),
-                            debug: None,
-                        },
-                        &mut out_buf,
-                    ),
-                    Err(_) => serde_json_core::to_slice(
-                        &Response::<()> {
-                            id,
-                            status: "ERROR",
-                            data: None,
-                            debug: Some("Pending DTC Failed"),
-                        },
-                        &mut out_buf,
-                    ),
-                },
-                Command::GenericRequest => break, //  TODO
             };
 
             if let Ok(len) = ser_result {
@@ -127,9 +86,9 @@ where
             if let Ok(len) = serde_json_core::to_slice(
                 &Response::<()> {
                     id: 0,
-                    status: "ERROR",
+                    status: Status::Error,
                     data: None,
-                    debug: Some("Invalid format"),
+                    debug: Some(DebugMsg::InvalidFormat),
                 },
                 &mut out_buf,
             ) {

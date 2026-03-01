@@ -15,7 +15,6 @@ const TIMEOUT_SINGLE: Duration = Duration::from_millis(1000);
 const TIMEOUT_INTER_FRAME: Duration = Duration::from_millis(100);
 const TIMEOUT_TOTAL: Duration = Duration::from_millis(500);
 
-/// Помилки транспортного рівня.
 #[derive(Debug)]
 pub enum IsoTpError {
     Timeout,
@@ -31,7 +30,6 @@ pub struct EcuResponse {
     pub data: Vec<u8, 64>,
 }
 
-/// Типи фреймів протоколу (PCI)
 #[repr(u8)]
 enum PciType {
     SingleFrame = 0,
@@ -52,7 +50,7 @@ impl PciType {
     }
 }
 
-/// Generic handler. D - це драйвер (ESP32, STM32, Mock).
+// D - driver(ESP32, STM32, Mock).
 pub struct IsoTpHandler<D> {
     driver: D,
 }

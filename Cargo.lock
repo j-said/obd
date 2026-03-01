@@ -35,6 +35,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
+name = "automotive_diag"
+version = "0.1.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c4c0e1ae5639782eaba043883580b3e5f0a987deacf27566650f3d8273750e0"
+dependencies = [
+ "serde",
+ "strum",
+]
+
+[[package]]
 name = "base16ct"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1506,6 +1516,7 @@ dependencies = [
 name = "obd-rust"
 version = "0.1.0"
 dependencies = [
+ "automotive_diag",
  "bt-hci",
  "defmt 1.0.1",
  "defmt-rtt",
