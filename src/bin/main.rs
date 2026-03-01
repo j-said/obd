@@ -16,7 +16,7 @@ use esp_radio::ble::controller::BleConnector;
 use static_cell::StaticCell;
 use trouble_host::prelude::*;
 
-use obd_rust::can::{CanManager, IsoTpHandler, Obd2Service, SharedTwaiRx, SharedTwaiTx};
+use obd_rust::can::{EspCanManager, IsoTpHandler, Obd2Service, SharedTwaiRx, SharedTwaiTx};
 use obd_rust::transport_io::ble::{BleResources, ObdRunner, ObdStack, BleChannel, ObdPeripheral};
 
 static TX_CHANNEL: BleChannel = BleChannel::new();
@@ -53,7 +53,7 @@ async fn main(spawner: Spawner) {
     let tx_shared = TWAI_TX.init(Mutex::new(tx));
     let rx_shared = TWAI_RX.init(Mutex::new(rx));
 
-    let can_manager = CanManager::new(tx_shared, rx_shared);
+    let can_manager = EspCanManager::new(tx_shared, rx_shared);
     let iso_tp = IsoTpHandler::new(can_manager);
     let _obd2 = Obd2Service::new(iso_tp);
 

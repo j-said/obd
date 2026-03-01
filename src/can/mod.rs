@@ -3,7 +3,7 @@
 /// Містить абстракцію AsyncCanDriver та реалізацію для ESP32.
 /// Цей модуль виступає шлюзом до апаратного забезпечення. Він зберігає
 /// глобальний стан конфігурації (Standard/Extended) та надає безпечний
-/// доступ до шини через CanManager.
+/// доступ до шини через EspCanManager.
 pub mod iso_tp;
 pub mod obd2;
 
@@ -53,18 +53,18 @@ pub fn set_extended_mode(mode: bool) {
 
 pub type SharedTwaiRx<'a> = Mutex<CriticalSectionRawMutex, TwaiRx<'a, Async>>;
 pub type SharedTwaiTx<'a> = Mutex<CriticalSectionRawMutex, TwaiTx<'a, Async>>;
-pub struct CanManager<'a> {
+pub struct EspCanManager<'a> {
     tx: &'a SharedTwaiTx<'a>,
     rx: &'a SharedTwaiRx<'a>,
 }
 
-impl<'a> CanManager<'a> {
+impl<'a> EspCanManager<'a> {
     pub fn new(tx: &'a SharedTwaiTx<'a>, rx: &'a SharedTwaiRx<'a>) -> Self {
         Self { tx, rx }
     }
 }
 
-impl<'a> AsyncCanDriver for CanManager<'a> {
+impl<'a> AsyncCanDriver for EspCanManager<'a> {
     type Frame = EspTwaiFrame;
     type Error = esp_hal::twai::EspTwaiError;
 

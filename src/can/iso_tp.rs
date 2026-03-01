@@ -3,13 +3,11 @@
 /// Hardware Agnostic реалізація.
 /// Підтримує роботу з множиною CAN-фреймів, використовуючи глобальний
 /// прапорець режиму адресації (Standard/Extended).
-use super::{is_extended, AsyncCanDriver};
-use embassy_time::{with_timeout, Duration};
+use super::{AsyncCanDriver, is_extended};
+use embassy_time::{Duration, with_timeout};
 use embedded_can::{ExtendedId, Frame, Id, StandardId};
 use heapless::Vec;
 
-const ID_FUNCTIONAL_STANDARD: u32 = 0x7DF;
-const ID_FUNCTIONAL_EXTENDED: u32 = 0x18DB33F1;
 const PADDING_BYTE: u8 = 0xAA;
 const FC_PCI_BYTE: u8 = 0x30;
 
@@ -27,7 +25,7 @@ pub enum IsoTpError {
     InvalidId,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct EcuResponse {
     pub id: u32,
     pub data: Vec<u8, 64>,
@@ -91,16 +89,12 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
     /// Метод для Functional Addressing (запит до всіх ECU)
     pub async fn send_functional_request(
         &self,
+        target_id: u32,
         data: &[u8],
     ) -> Result<Vec<EcuResponse, 8>, IsoTpError> {
         let ext = is_extended();
-        let id = if ext {
-            ID_FUNCTIONAL_EXTENDED
-        } else {
-            ID_FUNCTIONAL_STANDARD
-        };
 
-        self.transmit_sf(id, data, ext).await?;
+        self.transmit_sf(target_id, data, ext).await?;
         self.collect_multiple(TIMEOUT_INTER_FRAME, TIMEOUT_TOTAL)
             .await
     }
