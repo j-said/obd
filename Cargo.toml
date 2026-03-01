@@ -6,20 +6,19 @@ version = "0.1.0"
 [[bin]]
 name = "obd-rust"
 path = "./src/bin/main.rs"
-test = false
 
 [dependencies]
-# ESP Ecosystem (HAL, RTOS, Allocator)
+# ESP Ecosystem
 esp-hal = { git = "https://github.com/esp-rs/esp-hal", features = ["defmt", "esp32c3", "unstable"] }
 esp-rtos = { git = "https://github.com/esp-rs/esp-hal", package = "esp-rtos", features = ["defmt", "embassy", "esp-alloc", "esp-radio", "esp32c3"] }
 esp-radio = { git = "https://github.com/esp-rs/esp-hal", package = "esp-radio", features = ["esp32c3", "ble", "defmt", "unstable"] }
 esp-alloc = { git = "https://github.com/esp-rs/esp-hal", package = "esp-alloc", features = ["defmt"] }
 
-# Embassy - використовуємо версії, що мапляться на патчі
-embassy-executor = { version = "0.9.1" }
-embassy-time = "0.4.0"
-embassy-sync = "0.7.2"
-embassy-futures = "0.1.2"
+# Embassy
+embassy-executor = { version = "0.9.1" } 
+embassy-time = "0.5.0" 
+embassy-sync = "0.7.2" 
+embassy-futures = "0.1.2" 
 
 # Bluetooth Stack
 trouble-host = { version = "0.6.0", features = ["defmt", "peripheral", "gatt", "derive", "default-packet-pool", "security"] }
@@ -30,25 +29,32 @@ embedded-io-async = "0.7.0"
 embedded-io = "0.7.1"
 embedded-can = "0.4.1"
 
-# Logging & Memory
+# Serde core
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+serde_json_core = "0.6.0"
+
+# Logging
 defmt = "1.0.1"
-rtt-target = { version = "0.6.2", features = ["defmt"] }
-panic-rtt-target = { version = "0.2.0", features = ["defmt"] }
-heapless = { version = "0.8.0", features = ["portable-atomic"] }
-portable-atomic = { version = "1.9", default-features = false }
+defmt-rtt = "0.4.1"
+esp-backtrace = { version = "0.18.1", features = ["esp32c3", "panic-handler", "defmt"] }
+
+# Memory
+heapless = { version = "0.9.2", features = ["portable-atomic"] }
+portable-atomic = { version = "1.13.1", default-features = false }
 static_cell = "2.1.1"
 
-[patch.crates-io]
-# Примусове вирівнювання всієї екосистеми через git
-embedded-can = { git = "https://github.com/rust-embedded/embedded-hal", version = "=0.4.1" }
-embedded-io = { git = "https://github.com/rust-embedded/embedded-hal" }
-embedded-io-async = { git = "https://github.com/rust-embedded/embedded-hal" }
-
-embassy-executor = { git = "https://github.com/embassy-rs/embassy" }
-embassy-sync = { git = "https://github.com/embassy-rs/embassy" }
-embassy-time = { git = "https://github.com/embassy-rs/embassy" }
-embassy-time-driver = { git = "https://github.com/embassy-rs/embassy" }
-embassy-futures = { git = "https://github.com/embassy-rs/embassy" }
+[patch."https://github.com/esp-rs/esp-hal"]
+# Full workspace patch to resolve `links = "esp_rom_sys"` conflict
+esp-hal = { path = "/home/j-said/cloned-repoes/esp-hal/esp-hal" }
+esp-sync = { path = "/home/j-said/cloned-repoes/esp-hal/esp-sync" }
+esp-radio = { path = "/home/j-said/cloned-repoes/esp-hal/esp-radio" }
+esp-rtos = { path = "/home/j-said/cloned-repoes/esp-hal/esp-rtos" }
+esp-alloc = { path = "/home/j-said/cloned-repoes/esp-hal/esp-alloc" }
+esp-rom-sys = { path = "/home/j-said/cloned-repoes/esp-hal/esp-rom-sys" }
+esp-config = { path = "/home/j-said/cloned-repoes/esp-hal/esp-config" }
+esp-metadata-generated = { path = "/home/j-said/cloned-repoes/esp-hal/esp-metadata-generated" }
+esp-riscv-rt = { path = "/home/j-said/cloned-repoes/esp-hal/esp-riscv-rt" }
+esp-hal-procmacros = { path = "/home/j-said/cloned-repoes/esp-hal/esp-hal-procmacros" }
 
 [profile.release]
 codegen-units = 1

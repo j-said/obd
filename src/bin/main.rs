@@ -1,25 +1,29 @@
 #![no_std]
 #![no_main]
 
+use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_sync::mutex::Mutex;
 use esp_alloc as _;
+use esp_backtrace as _;
 use esp_hal::{
-    clock::CpuClock, interrupt::software, timer::timg::TimerGroup, twai::{BaudRate, TwaiConfiguration, TwaiMode}
+    clock::CpuClock,
+    interrupt::software,
+    timer::timg::TimerGroup,
+    twai::{BaudRate, TwaiConfiguration, TwaiMode},
 };
-use esp_radio::ble::controller::{self, BleConnector};
-use panic_rtt_target as _;
+use esp_radio::ble::controller::BleConnector;
 use static_cell::StaticCell;
+use trouble_host::prelude::*;
 
 use obd_rust::can::{CanManager, IsoTpHandler, Obd2Service, SharedTwaiRx, SharedTwaiTx};
-use obd_rust::transport_io::ble::{BleChannel, BleResources, ObdPeripheral, ObdRunner, ObdStack};
-use trouble_host::prelude::*;
+use obd_rust::transport_io::ble::{BleResources, ObdRunner, ObdStack, BleChannel, ObdPeripheral};
 
 static TX_CHANNEL: BleChannel = BleChannel::new();
 static RX_CHANNEL: BleChannel = BleChannel::new();
-static OBD_STACK: StaticCell<ObdStack> = StaticCell::new();
-static BLE_RESOURCES: StaticCell<BleResources> = StaticCell::new();
 
+static BLE_STACK_RESOURCES: StaticCell<BleResources> = StaticCell::new();
+static BLE_STACK: StaticCell<ObdStack> = StaticCell::new();
 
 static TWAI_TX: StaticCell<SharedTwaiTx> = StaticCell::new();
 static TWAI_RX: StaticCell<SharedTwaiRx> = StaticCell::new();
@@ -51,18 +55,20 @@ async fn main(spawner: Spawner) {
 
     let can_manager = CanManager::new(tx_shared, rx_shared);
     let iso_tp = IsoTpHandler::new(can_manager);
-    let obd2 = Obd2Service::new(iso_tp);
+    let _obd2 = Obd2Service::new(iso_tp);
 
     // Ble init with esp-radio
     let connector = BleConnector::new(peripherals.BT, Default::default()).unwrap();
     let controller = ExternalController::new(connector);
 
-    let resources = BLE_RESOURCES.init(BleResources::new());
-    let stack = trouble_host::new(controller, resources);
-    let (peripheral, runner) = stack.build();
+    let resources = BLE_STACK_RESOURCES.init(BleResources::new());
+    let stack = BLE_STACK.init_with(|| trouble_host::new(controller, resources));
+    let _host = stack.build();
+    let _peripheral = _host.peripheral;
+    let runner = _host.runner;
 
-    // spawner.spawn(ble_runner_task(runner)).unwrap();
-    // spawner.spawn(ble_service_task(stack, peripheral)).unwrap();
+    spawner.spawn(ble_runner_task(runner)).unwrap();
+    // spawner.spawn().unwrap();
 
     // -- End
 
@@ -75,5 +81,5 @@ async fn ble_runner_task(mut runner: ObdRunner) {
     runner.run().await.unwrap();
 }
 
-#[embassy_executor::task]
-async fn ble_service_task(stack: ObdStack, peripheral: ObdPeripheral) {}
+// #[embassy_executor::task]
+// async fn ble_service_task(stack: ObdStack, peripheral: ObdPeripheral) {}
