@@ -9,18 +9,18 @@ where
     S: Read + Write,
     D: AsyncCanDriver,
 {
-    let mut buf = [0u8; 1024];
+    let mut in_buf = [0u8; 1024];
     let mut out_buf = [0u8; 1024];
 
     loop {
-        let Ok(n) = stream.read(&mut buf).await else {
+        let Ok(n) = stream.read(&mut in_buf).await else {
             break;
         };
         if n == 0 {
             break;
         }
 
-        if let Ok((req, _)) = serde_json_core::from_slice::<Request>(&buf[..n]) {
+        if let Ok((req, _)) = serde_json_core::from_slice::<Request>(&in_buf[..n]) {
             let id = req.id;
 
             let ser_result = match req.cmd {
@@ -77,6 +77,26 @@ where
                         &mut out_buf,
                     )
                 }
+                Command::GetStoredDtcs => match obd_service.get_stored_dtcs().await {
+                    Ok(data) => serde_json_core::to_slice(
+                        &Response {
+                            id,
+                            status: Status::Ok,
+                            data: Some(&data),
+                            debug: None,
+                        },
+                        &mut out_buf,
+                    ),
+                    Err(_) => serde_json_core::to_slice(
+                        &Response::<()> {
+                            id,
+                            status: Status::Error,
+                            data: None,
+                            debug: Some(DebugMsg::GetStoredDtcsFailed),
+                        },
+                        &mut out_buf,
+                    ),
+                },
             };
 
             if let Ok(len) = ser_result {
@@ -97,3 +117,5 @@ where
         }
     }
 }
+
+// Put here logic to store dtc localy

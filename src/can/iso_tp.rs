@@ -1,9 +1,4 @@
-/// Модуль транспортного рівня ISO-TP (ISO 15765-2).
-///
-/// Hardware Agnostic реалізація.
-/// Підтримує роботу з множиною CAN-фреймів, використовуючи глобальний
-/// прапорець режиму адресації (Standard/Extended).
-use super::{AsyncCanDriver, is_extended};
+use super::AsyncCanDriver;
 use embassy_time::{Duration, with_timeout};
 use embedded_can::{ExtendedId, Frame, Id, StandardId};
 use heapless::Vec;
@@ -50,7 +45,6 @@ impl PciType {
     }
 }
 
-// D - driver(ESP32, STM32, Mock).
 pub struct IsoTpHandler<D> {
     driver: D,
 }
@@ -60,45 +54,42 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         Self { driver }
     }
 
-    /// Метод для Physical Addressing (запит до конкретного ECU).
     pub async fn send_physical_request(
         &self,
-        id: u32,
+        target_id: Id,
         data: &[u8],
     ) -> Result<Vec<u8, 64>, IsoTpError> {
-        let ext = is_extended();
-        self.transmit_sf(id, data, ext).await?;
+        self.transmit_sf(target_id, data).await?;
 
-        // Автоматично розраховуємо очікуваний ID відповіді.
-        let resp_id = if ext {
-            // Extended ID: Змінюємо Source (Byte 0) і Target (Byte 1).
-            // Запит: 0x18DA[Target][Source] -> Відповідь: 0x18DA[Source][Target]
-            let target = (id >> 8) & 0xFF;
-            let source = id & 0xFF;
-            (id & 0xFFFF0000) | (source << 8) | target
-        } else {
-            // Standard: RequestID + 8 (напр. 7E0 -> 7E8)
-            id + 8
+        let resp_id = match target_id {
+            Id::Standard(s) => Id::Standard(StandardId::new(s.as_raw() + 8).unwrap()),
+            Id::Extended(e) => {
+                let id = e.as_raw();
+                Id::Extended(
+                    ExtendedId::new((id & 0xFFFF0000) | ((id & 0xFF) << 8) | ((id >> 8) & 0xFF))
+                        .unwrap(),
+                )
+            }
         };
 
         self.receive_single(resp_id).await
     }
 
-    /// Метод для Functional Addressing (запит до всіх ECU)
     pub async fn send_functional_request(
         &self,
-        target_id: u32,
+        target_id: Id,
         data: &[u8],
     ) -> Result<Vec<EcuResponse, 8>, IsoTpError> {
-        let ext = is_extended();
-
-        self.transmit_sf(target_id, data, ext).await?;
-        self.collect_multiple(TIMEOUT_INTER_FRAME, TIMEOUT_TOTAL)
-            .await
+        self.transmit_sf(target_id, data).await?;
+        self.collect_multiple(
+            matches!(target_id, Id::Extended(_)),
+            TIMEOUT_INTER_FRAME,
+            TIMEOUT_TOTAL,
+        )
+        .await
     }
 
-    /// Приватний метод відправки Single Frame (PCI + Data + Padding).
-    async fn transmit_sf(&self, id: u32, data: &[u8], ext: bool) -> Result<(), IsoTpError> {
+    async fn transmit_sf(&self, id: Id, data: &[u8]) -> Result<(), IsoTpError> {
         if data.len() > 7 {
             return Err(IsoTpError::BufferOverflow);
         }
@@ -107,8 +98,7 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         tx[0] = data.len() as u8;
         tx[1..1 + data.len()].copy_from_slice(data);
 
-        let can_id = self.build_id(id, ext)?;
-        let frame = D::Frame::new(can_id, &tx).ok_or(IsoTpError::DriverError)?;
+        let frame = D::Frame::new(id, &tx).ok_or(IsoTpError::DriverError)?;
 
         self.driver
             .transmit(&frame)
@@ -116,24 +106,20 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
             .map_err(|_| IsoTpError::DriverError)
     }
 
-    /// Отримання одиночної відповіді.
-    async fn receive_single(&self, target_id: u32) -> Result<Vec<u8, 64>, IsoTpError> {
+    async fn receive_single(&self, target_id: Id) -> Result<Vec<u8, 64>, IsoTpError> {
         let mut full_data: Vec<u8, 64> = Vec::new();
         let mut expected_len = 0;
         let mut next_sn = 1;
-        let is_ext_mode = is_extended();
 
         with_timeout(TIMEOUT_SINGLE, async {
             loop {
-                // Виклик через абстракцію.
                 let frame = self
                     .driver
                     .receive()
                     .await
                     .map_err(|_| IsoTpError::DriverError)?;
-                let (id, is_ext) = self.get_raw_id(&frame);
 
-                if is_ext_mode != is_ext || id != target_id {
+                if frame.id() != target_id {
                     continue;
                 }
 
@@ -154,17 +140,17 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
                         expected_len = (((d[0] & 0x0F) as usize) << 8) | (d[1] as usize);
                         full_data.extend_from_slice(&d[2..]).ok();
 
-                        let fc_id = if is_ext_mode {
-                            target_id
-                        } else {
-                            target_id - 8
+                        let fc_id = match target_id {
+                            Id::Standard(s) => {
+                                Id::Standard(StandardId::new(s.as_raw() - 8).unwrap())
+                            }
+                            Id::Extended(_) => target_id,
                         };
                         self.send_flow_control(fc_id).await?;
                     }
                     Some(PciType::ConsecutiveFrame) => {
                         if (d[0] & 0x0F) != next_sn {
                             continue;
-                            // return Err(IsoTpError::InvalidSequence);
                         }
                         let to_copy = core::cmp::min(expected_len - full_data.len(), 7);
                         full_data.extend_from_slice(&d[1..1 + to_copy]).ok();
@@ -182,30 +168,29 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         .map_err(|_| IsoTpError::Timeout)?
     }
 
-    /// Збір відповідей від декількох блоків (Rolling Timeout).
     async fn collect_multiple(
         &self,
+        is_ext_mode: bool,
         inter_frame: Duration,
         total_guard: Duration,
     ) -> Result<Vec<EcuResponse, 8>, IsoTpError> {
         let mut responses: Vec<EcuResponse, 8> = Vec::new();
-        let is_ext_mode = is_extended();
 
         let _ = with_timeout(total_guard, async {
             loop {
                 if let Ok(Ok(frame)) = with_timeout(inter_frame, self.driver.receive()).await {
-                    let (id, is_ext) = self.get_raw_id(&frame);
+                    let (id, is_ext) = match frame.id() {
+                        Id::Standard(s) => (s.as_raw() as u32, false),
+                        Id::Extended(e) => (e.as_raw(), true),
+                    };
 
                     if is_ext_mode != is_ext {
                         continue;
                     }
 
-                    // Фільтр діапазону відповідей OBD2.
                     let valid_resp = if is_ext_mode {
-                        // Для Extended OBD відповіді зазвичай мають формат 0x18DA....
                         (id & 0xFFFF0000) == 0x18DA0000
                     } else {
-                        // Standard: діапазон 0x7E8..0x7EF
                         (0x7E8..=0x7EF).contains(&id)
                     };
 
@@ -213,7 +198,6 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
                         let d = frame.data();
                         if !d.is_empty() {
                             let len = (d[0] & 0x0F) as usize;
-                            // Припускаємо Single Frame для discovery (більшість ECU відповідають коротко на broadcast).
                             if len <= 7
                                 && PciType::from_byte(d[0])
                                     .map_or(false, |p| matches!(p, PciType::SingleFrame))
@@ -240,9 +224,7 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         }
     }
 
-    /// Відправка Flow Control кадру.
-    /// Flow Control: Continue To Send (CTS), BlockSize=0, STmin=0
-    async fn send_flow_control(&self, request_id: u32) -> Result<(), IsoTpError> {
+    async fn send_flow_control(&self, target_id: Id) -> Result<(), IsoTpError> {
         let fc = [
             FC_PCI_BYTE,
             0x00,
@@ -253,38 +235,10 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
             PADDING_BYTE,
             PADDING_BYTE,
         ];
-        let ext = is_extended();
-
-        let can_id = self.build_id(request_id, ext)?;
-        let frame = D::Frame::new(can_id, &fc).ok_or(IsoTpError::DriverError)?;
-
+        let frame = D::Frame::new(target_id, &fc).ok_or(IsoTpError::DriverError)?;
         self.driver
             .transmit(&frame)
             .await
             .map_err(|_| IsoTpError::DriverError)
-    }
-
-    /// Допоміжний метод для отримання сирого ID та прапорця Extended (DRY)
-    fn get_raw_id(&self, frame: &D::Frame) -> (u32, bool) {
-        match frame.id() {
-            Id::Standard(s) => (s.as_raw() as u32, false),
-            Id::Extended(e) => (e.as_raw(), true),
-        }
-    }
-
-    /// Допоміжний метод для створення Id (DRY)
-    fn build_id(&self, id: u32, ext: bool) -> Result<Id, IsoTpError> {
-        if ext {
-            Ok(Id::Extended(
-                ExtendedId::new(id).ok_or(IsoTpError::InvalidId)?,
-            ))
-        } else {
-            if id > 0x7FF {
-                return Err(IsoTpError::InvalidId);
-            }
-            Ok(Id::Standard(
-                StandardId::new(id as u16).ok_or(IsoTpError::InvalidId)?,
-            ))
-        }
     }
 }

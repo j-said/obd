@@ -1,7 +1,6 @@
 pub mod iso_tp;
 pub mod obd2;
 
-use core::sync::atomic::{AtomicBool, Ordering};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
 use embedded_can::Frame;
@@ -20,19 +19,6 @@ pub trait AsyncCanDriver {
 
     async fn transmit(&self, frame: &Self::Frame) -> Result<(), Self::Error>;
     async fn receive(&self) -> Result<Self::Frame, Self::Error>;
-}
-
-// false = Standard ID (11-bit)
-// true  = Extended ID (29-bit)
-pub static IS_EXTENDED: AtomicBool = AtomicBool::new(false);
-
-#[inline(always)]
-pub fn is_extended() -> bool {
-    IS_EXTENDED.load(Ordering::Relaxed)
-}
-
-pub fn set_extended_mode(mode: bool) {
-    IS_EXTENDED.store(mode, Ordering::Relaxed);
 }
 
 /// --- Реалізація для ESP32 ---

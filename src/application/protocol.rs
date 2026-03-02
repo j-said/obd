@@ -6,6 +6,7 @@ pub enum Command {
     GetVin,
     ClearDtcs,
     GetLiveData { pid: u8 },
+    GetStoredDtcs,
 }
 
 #[derive(Deserialize, Debug)]
@@ -27,6 +28,7 @@ pub enum DebugMsg {
     ObdTimeout,
     LiveDataFailed,
     InvalidFormat,
+    GetStoredDtcsFailed,
 }
 
 #[derive(Serialize)]
