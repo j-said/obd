@@ -1,44 +1,61 @@
 #![no_std]
 #![no_main]
 
+// Error pack's
+use defmt::{error, info};
 use defmt_rtt as _;
-use embassy_executor::Spawner;
-use embassy_sync::mutex::Mutex;
 use esp_alloc as _;
 use esp_backtrace as _;
+
+// Embassy core
+use core::future::pending;
+use embassy_executor::Spawner;
+use embassy_futures::join::join;
+use embassy_sync::mutex::Mutex;
 use esp_hal::{
     clock::CpuClock,
     interrupt::software,
     timer::timg::TimerGroup,
     twai::{BaudRate, TwaiConfiguration, TwaiMode},
 };
-use esp_radio::ble::controller::BleConnector;
 use static_cell::StaticCell;
+
+// Trouble + chip ble driver
+use esp_radio::ble::controller::BleConnector;
 use trouble_host::prelude::*;
 
+// Self imports
+use obd_rust::application::handle_client;
 use obd_rust::can::{EspCanManager, IsoTpHandler, Obd2Service, SharedTwaiRx, SharedTwaiTx};
-use obd_rust::transport_io::ble::{BleResources, ObdRunner, ObdStack, BleChannel, ObdPeripheral};
+use obd_rust::transport_io::ble::{
+    BleChannel, BleResources, ObdPeripheral, ObdRunner, ObdStack,
+    server::{create_advertisement, run_connection},
+    stream::BleStream,
+};
 
-static TX_CHANNEL: BleChannel = BleChannel::new();
-static RX_CHANNEL: BleChannel = BleChannel::new();
+static STREAM_TX: BleChannel = BleChannel::new();
+static STREAM_RX: BleChannel = BleChannel::new();
 
 static BLE_STACK_RESOURCES: StaticCell<BleResources> = StaticCell::new();
 static BLE_STACK: StaticCell<ObdStack> = StaticCell::new();
 
 static TWAI_TX: StaticCell<SharedTwaiTx> = StaticCell::new();
 static TWAI_RX: StaticCell<SharedTwaiRx> = StaticCell::new();
+static OBD_SERVICE: StaticCell<Obd2Service<EspCanManager<'static>>> = StaticCell::new();
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
-    // ESP init
+    info!("Starting OBD-BLE Bridge initialization...");
+
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     let software_interrupt = software::SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
 
     esp_rtos::start(timg0.timer0, software_interrupt.software_interrupt0);
     esp_alloc::heap_allocator!(size: 72 * 1024);
+    info!("System and allocator initialized");
 
-    // TWAI init
+    info!("CAN initialization");
     let (rx, tx) = TwaiConfiguration::new(
         peripherals.TWAI0,
         peripherals.GPIO4,
@@ -55,31 +72,94 @@ async fn main(spawner: Spawner) {
 
     let can_manager = EspCanManager::new(tx_shared, rx_shared);
     let iso_tp = IsoTpHandler::new(can_manager);
-    let _obd2 = Obd2Service::new(iso_tp);
+    let obd2 = OBD_SERVICE.init(Obd2Service::new(iso_tp, false));
+    info!("OBD2 services configured");
 
-    // Ble init with esp-radio
-    let connector = BleConnector::new(peripherals.BT, Default::default()).unwrap();
+    let connector = match BleConnector::new(peripherals.BT, Default::default()) {
+        Ok(c) => c,
+        Err(_e) => {
+            error!("BLE Connector init failed");
+            panic!("BLE Init Error");
+        }
+    };
     let controller = ExternalController::new(connector);
 
     let resources = BLE_STACK_RESOURCES.init(BleResources::new());
     let stack = BLE_STACK.init_with(|| trouble_host::new(controller, resources));
-    let _host = stack.build();
-    let _peripheral = _host.peripheral;
-    let runner = _host.runner;
+    let host = stack.build();
+    info!("BLE stack built successfully");
+    let peripheral = host.peripheral;
+    let runner = host.runner;
 
     spawner.spawn(ble_runner_task(runner)).unwrap();
-    // spawner.spawn().unwrap();
+    info!("BLE runner task started");
+
+    spawner
+        .spawn(ble_service_task(stack, peripheral, obd2))
+        .unwrap();
+    info!("BLE servise task started");
 
     // -- End
 
-    loop {}
+    pending::<()>().await;
+    info!("All tasks spawned. Entering pending state.");
+}
+
+// Керує подіями HCI.
+#[embassy_executor::task]
+async fn ble_runner_task(mut runner: ObdRunner) {
+    info!("BLE Runner task is running...");
+    if let Err(e) = runner.run().await {
+        error!("BLE Runner exited with error: {:?}", e);
+    }
 }
 
 #[embassy_executor::task]
-async fn ble_runner_task(mut runner: ObdRunner) {
-    // Керує подіями HCI.
-    runner.run().await.unwrap();
-}
+async fn ble_service_task(
+    stack: &'static ObdStack,
+    mut peripheral: ObdPeripheral,
+    obd_service: &'static Obd2Service<EspCanManager<'static>>,
+) {
+    info!("BLE Service task started");
+    let mut adv_data = [0; 31];
 
-// #[embassy_executor::task]
-// async fn ble_service_task(stack: ObdStack, peripheral: ObdPeripheral) {}
+    let adv = match create_advertisement(&mut adv_data) {
+        Ok(a) => a,
+        Err(e) => {
+            error!("Failed to create advertisement: {:?}", e);
+            return;
+        }
+    };
+
+    loop {
+        info!("Starting advertisement...");
+        match peripheral.advertise(&Default::default(), adv).await {
+            Ok(advertiser) => {
+                info!("Advertising. Waiting for connection...");
+                match advertiser.accept().await {
+                    Ok(conn) => {
+                        info!("Device connected!");
+
+                        let mut stream = BleStream::new(&STREAM_TX, &STREAM_RX);
+
+                        let l2cap_task = run_connection(stack, &conn, &STREAM_TX, &STREAM_RX);
+                        let app_task = handle_client(&mut stream, obd_service);
+
+                        let (l2cap_res, _) = join(l2cap_task, app_task).await;
+
+                        if let Err(e) = l2cap_res {
+                            error!("Connection closed with error: {:?}", e);
+                        } else {
+                            info!("Connection closed normally");
+                        }
+                    }
+                    Err(e) => error!("Accept error: {:?}", e),
+                }
+            }
+            Err(e) => {
+                error!("Advertise error: {:?}", e);
+                embassy_time::Timer::after_secs(1).await;
+            }
+        }
+    }
+}

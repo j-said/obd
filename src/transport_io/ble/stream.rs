@@ -10,7 +10,7 @@ pub struct BleStream {
 }
 
 impl BleStream {
-    pub fn new(rx: &'static BleChannel, tx: &'static BleChannel) -> Self {
+    pub fn new(tx: &'static BleChannel, rx: &'static BleChannel) -> Self {
         Self {
             rx,
             tx,
