@@ -3,9 +3,10 @@
 
 // Error pack's
 use defmt::{error, info};
-use defmt_rtt as _;
+// use defmt_rtt as _;
 use esp_alloc as _;
 use esp_backtrace as _;
+use esp_println as _;
 
 // Embassy core
 use core::future::pending;
@@ -42,6 +43,8 @@ static BLE_STACK: StaticCell<ObdStack> = StaticCell::new();
 static TWAI_TX: StaticCell<SharedTwaiTx> = StaticCell::new();
 static TWAI_RX: StaticCell<SharedTwaiRx> = StaticCell::new();
 static OBD_SERVICE: StaticCell<Obd2Service<EspCanManager<'static>>> = StaticCell::new();
+
+esp_bootloader_esp_idf::esp_app_desc!();
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
@@ -163,3 +166,6 @@ async fn ble_service_task(
         }
     }
 }
+
+
+
