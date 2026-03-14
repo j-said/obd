@@ -1,6 +1,7 @@
 pub mod protocol;
 
 use crate::can::{AsyncCanDriver, Obd2Service, obd2::ECU_ENGINE_TX_ID};
+use defmt::{info, warn};
 use embedded_io_async::{Read, Write};
 use protocol::{Command, DebugMsg, Request, Response, Status};
 
@@ -12,16 +13,29 @@ where
     let mut in_buf = [0u8; 1024];
     let mut out_buf = [0u8; 1024];
 
+    info!("Client handler task started");
+
     loop {
         let Ok(n) = stream.read(&mut in_buf).await else {
+            warn!("Stream read error");
             break;
         };
         if n == 0 {
+            info!("Stream closed by client");
             break;
         }
 
+        // --- ЛОГУВАННЯ ВХІДНИХ ДАНИХ ---
+        if let Ok(raw_str) = core::str::from_utf8(&in_buf[..n]) {
+            info!("RX ({} bytes): {}", n, raw_str);
+        } else {
+            info!("RX ({} bytes): <Binary data>", n);
+        }
+        // ------------------------------
+
         if let Ok((req, _)) = serde_json_core::from_slice::<Request>(&in_buf[..n]) {
             let id = req.id;
+            info!("Parsed request ID: {}", id);
 
             let ser_result = match req.cmd {
                 Command::GetVin => match obd_service.get_vin(ECU_ENGINE_TX_ID).await {
