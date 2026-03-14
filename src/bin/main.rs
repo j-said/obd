@@ -11,11 +11,12 @@ use esp_println as _;
 // Embassy core
 use core::future::pending;
 use embassy_executor::Spawner;
-use embassy_futures::join::join;
+use embassy_futures::select::{Either, select};
 use embassy_sync::mutex::Mutex;
 use esp_hal::{
     clock::CpuClock,
     interrupt::software,
+    // rng::{Trng, TrngSource},
     timer::timg::TimerGroup,
     twai::{BaudRate, TwaiConfiguration, TwaiMode},
 };
@@ -55,6 +56,8 @@ async fn main(spawner: Spawner) {
     let software_interrupt = software::SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
 
     esp_rtos::start(timg0.timer0, software_interrupt.software_interrupt0);
+    // let _trng_source = TrngSource::new(peripherals.RNG, peripherals.ADC1);
+    // let mut trng = Trng::try_new().unwrap();
     esp_alloc::heap_allocator!(size: 72 * 1024);
     info!("System and allocator initialized");
 
@@ -148,12 +151,12 @@ async fn ble_service_task(
                         let l2cap_task = run_connection(stack, &conn, &STREAM_TX, &STREAM_RX);
                         let app_task = handle_client(&mut stream, obd_service);
 
-                        let (l2cap_res, _) = join(l2cap_task, app_task).await;
-
-                        if let Err(e) = l2cap_res {
-                            error!("Connection closed with error: {:?}", e);
-                        } else {
-                            info!("Connection closed normally");
+                        match select(l2cap_task, app_task).await {
+                            Either::First(Err(e)) => {
+                                error!("Connection closed with error: {:?}", e)
+                            }
+                            Either::First(Ok(_)) => info!("Connection closed normally (L2CAP)"),
+                            Either::Second(_) => info!("App task finished"),
                         }
                     }
                     Err(e) => error!("Accept error: {:?}", e),
@@ -166,6 +169,3 @@ async fn ble_service_task(
         }
     }
 }
-
-
-
