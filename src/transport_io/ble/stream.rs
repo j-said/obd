@@ -1,5 +1,5 @@
-// TODO: Пізніше мігрувати до transport_io::mod, як абстракція для бізнес логіки
-use super::{BleError, BleChannel, BlePacket, MTU_SIZE};
+use super::{BleChannel, BleError, BlePacket, MTU_SIZE};
+use defmt::{debug, trace};
 use embedded_io_async::{ErrorType, Read, Write};
 
 pub struct BleStream {
@@ -32,8 +32,10 @@ impl Read for BleStream {
 
         // Якщо внутрішній буфер вичитано, чекаємо новий пакет
         if self.store.is_empty() || self.store_offset >= self.store.len() {
+            trace!("BleStream: waiting for new packet...");
             self.store = self.rx.receive().await;
             self.store_offset = 0;
+            debug!("BleStream: received packet of {} bytes", self.store.len());
         }
 
         let available = self.store.len() - self.store_offset;
@@ -68,6 +70,7 @@ impl Write for BleStream {
                 .extend_from_slice(&buf[offset..offset + chunk_size])
                 .map_err(|_| BleError::MtuExceeded)?;
 
+            trace!("BleStream: sending chunk of {} bytes", chunk_size);
             self.tx.send(packet).await;
             offset += chunk_size;
         }
