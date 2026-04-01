@@ -40,3 +40,9 @@ pub enum Status {
     Ok,
     Error,
 }
+
+// TODO: Consider adding more detailed error codes or messages in the future for better debugging and user feedback.
+// TODO: Implement support for additional OBD-II commands and responses as needed in the future, such as Service 0x09 for more PIDs, Service 0x0A for permanent DTCs, etc.
+// TODO: Add support for sending physical requests to specific ECUs, not just functional requests, if needed in the future.
+
+// TODO: Think about switching to a more compact binary protocol

@@ -57,3 +57,9 @@ fn parse_bytes(b1: u8, b2: u8) -> String<5> {
     write!(dtc, "{}{:X}{:X}{:X}{:X}", prefix, d1, d2, d3, d4).ok();
     dtc
 }
+
+
+// TODO: Consider adding support for OBD-II over CAN FD if needed in the future.
+// TODO: Add unit tests for the decode_responses and parse_bytes functions to ensure correct DTC parsing.
+// TODO: Implement logging for debugging purposes, especially for cases where the ECU response is unexpected or malformed.
+// TODO: Add support for parsing permanent DTCs (Service 0x0A) and pending DTCs (Service 0x02) if needed in the future.

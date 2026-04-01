@@ -81,3 +81,7 @@ pub async fn run_connection(
         Either::Second(res) => res,
     }
 }
+
+// TODO: Add GATT service for notifications 
+// TODO: Add encryption and authentication for the BLE connection
+// TODO: Add generic psm support to allow for multiple services in the future if needed 

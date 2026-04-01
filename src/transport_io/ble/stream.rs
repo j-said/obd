@@ -82,3 +82,7 @@ impl Write for BleStream {
         Ok(())
     }
 }
+
+
+// TODO: Refactor the BleStream to handle backpressure and flow control if needed in the future, especially for high-throughput scenarios.
+// TODO: Implement error handling for cases where the BLE connection is lost or encounters issues, and consider adding reconnection logic if necessary.

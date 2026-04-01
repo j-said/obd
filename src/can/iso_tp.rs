@@ -248,8 +248,8 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         is_ext_mode: bool,
     ) {
         let (id_raw, is_f_ext) = match f.id() {
-            Id::Standard(s) => (s.as_raw() as u32, false),
-            Id::Extended(e) => (e.as_raw(), true),
+            Id::Standard(std) => (std.as_raw() as u32, false),
+            Id::Extended(ext) => (ext.as_raw(), true),
         };
         if is_ext_mode != is_f_ext || !self.is_valid_resp(id_raw, is_ext_mode) {
             return;
@@ -310,3 +310,14 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
             .map_err(|_| IsoTpError::DriverError)
     }
 }
+
+// TODO: Add support for multi-frame transmission (currently only single frame is supported)
+// TODO: Add support for functional requests (currently only physical requests are supported)
+// TODO: Add better error handling and reporting (currently just returns a generic error)
+// TODO: Add support for extended addressing (currently only standard addressing is supported)
+// TODO: Add support for different flow control options (currently just sends a basic flow control frame)
+// TODO: Add support for timing parameters (currently uses fixed timeouts)
+// TODO: Add support for concurrent transfers (currently assumes only one transfer at a time)
+// TODO: Add support for cancellation of transfers (currently no way to cancel an ongoing transfer)
+
+// TODO: Add iso-tp feutures build flags 

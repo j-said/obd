@@ -132,4 +132,5 @@ where
     }
 }
 
-// Put here logic to store dtc localy
+// TODO: Put here logic to store dtc localy
+// TODO: Add support for autonomous DTC monitoring and reporting via BLE notifications if needed in the future.

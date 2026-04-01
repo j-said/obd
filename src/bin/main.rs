@@ -169,3 +169,12 @@ async fn ble_service_task(
         }
     }
 }
+
+
+// TODO: Add logic to switch the CAN is_extended flag based on the ECU responses if needed in the future.
+// TODO: Add support for autonomous DTC monitoring and reporting via BLE notifications if needed in the future.
+// TODO: Implement logging for debugging purposes, especially for cases where the ECU response is unexpected or malformed.
+
+// TODO: Add support for WWH-OBD
+// TODO: Add support for UDS (Unified Diagnostic Services)
+// TODO: Add storing to the external SD card via SPI
