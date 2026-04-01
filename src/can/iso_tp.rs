@@ -3,6 +3,13 @@ use embassy_time::{Duration, with_timeout};
 use embedded_can::{ExtendedId, Frame, Id, StandardId};
 use heapless::Vec;
 
+// FC = Flow Control
+// PCI = Protocol Control Information
+// cf = Consecutive Frame
+// FF = First Frame
+// SF = Single Frame
+// SN = Sequence Number
+
 const PADDING_BYTE: u8 = 0xAA;
 const FC_PCI_BYTE: u8 = 0x30;
 
@@ -23,6 +30,13 @@ pub enum IsoTpError {
 pub struct EcuResponse {
     pub id: u32,
     pub data: Vec<u8, 64>,
+}
+
+struct TransferState {
+    id: u32,
+    expected_len: usize,
+    next_sn: u8,
+    buffer: Vec<u8, 64>,
 }
 
 #[repr(u8)]
@@ -54,24 +68,31 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         Self { driver }
     }
 
+    fn get_fc_id(&self, target_id: Id) -> Id {
+        match target_id {
+            Id::Standard(std) => Id::Standard(StandardId::new(std.as_raw() - 8).unwrap()),
+            Id::Extended(ext) => {
+                Id::Extended(ExtendedId::new(self.swap_ext_addr(ext.as_raw())).unwrap())
+            }
+        }
+    }
+
+    fn swap_ext_addr(&self, id: u32) -> u32 {
+        (id & 0xFFFF0000) | ((id & 0xFF) << 8) | ((id >> 8) & 0xFF)
+    }
+
     pub async fn send_physical_request(
         &self,
         target_id: Id,
         data: &[u8],
     ) -> Result<Vec<u8, 64>, IsoTpError> {
-        self.transmit_sf(target_id, data).await?;
-
         let resp_id = match target_id {
             Id::Standard(s) => Id::Standard(StandardId::new(s.as_raw() + 8).unwrap()),
             Id::Extended(e) => {
-                let id = e.as_raw();
-                Id::Extended(
-                    ExtendedId::new((id & 0xFFFF0000) | ((id & 0xFF) << 8) | ((id >> 8) & 0xFF))
-                        .unwrap(),
-                )
+                Id::Extended(ExtendedId::new(self.swap_ext_addr(e.as_raw())).unwrap())
             }
         };
-
+        self.transmit_sf(target_id, data).await?;
         self.receive_single(resp_id).await
     }
 
@@ -107,120 +128,167 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
     }
 
     async fn receive_single(&self, target_id: Id) -> Result<Vec<u8, 64>, IsoTpError> {
-        let mut full_data: Vec<u8, 64> = Vec::new();
-        let mut expected_len = 0;
-        let mut next_sn = 1;
-
-        with_timeout(TIMEOUT_SINGLE, async {
-            loop {
-                let frame = self
-                    .driver
-                    .receive()
-                    .await
-                    .map_err(|_| IsoTpError::DriverError)?;
-
-                if frame.id() != target_id {
-                    continue;
-                }
-
-                let d = frame.data();
-                if d.is_empty() {
-                    continue;
-                }
-
-                match PciType::from_byte(d[0]) {
-                    Some(PciType::SingleFrame) => {
-                        let len = (d[0] & 0x0F) as usize;
-                        if len > 0 && len <= 7 {
-                            full_data.extend_from_slice(&d[1..1 + len]).ok();
-                            return Ok(full_data);
-                        }
-                    }
-                    Some(PciType::FirstFrame) => {
-                        expected_len = (((d[0] & 0x0F) as usize) << 8) | (d[1] as usize);
-                        full_data.extend_from_slice(&d[2..]).ok();
-
-                        let fc_id = match target_id {
-                            Id::Standard(s) => {
-                                Id::Standard(StandardId::new(s.as_raw() - 8).unwrap())
-                            }
-                            Id::Extended(_) => target_id,
-                        };
-                        self.send_flow_control(fc_id).await?;
-                    }
-                    Some(PciType::ConsecutiveFrame) => {
-                        if (d[0] & 0x0F) != next_sn {
-                            continue;
-                        }
-                        let to_copy = core::cmp::min(expected_len - full_data.len(), 7);
-                        full_data.extend_from_slice(&d[1..1 + to_copy]).ok();
-
-                        if full_data.len() >= expected_len {
-                            return Ok(full_data);
-                        }
-                        next_sn = (next_sn + 1) % 16;
-                    }
-                    _ => continue,
-                }
-            }
-        })
-        .await
-        .map_err(|_| IsoTpError::Timeout)?
+        let mut state = TransferState {
+            id: 0,
+            expected_len: 0,
+            next_sn: 1,
+            buffer: Vec::new(),
+        };
+        with_timeout(TIMEOUT_SINGLE, self.receive_loop(&mut state, target_id))
+            .await
+            .map_err(|_| IsoTpError::Timeout)?
     }
 
-    async fn collect_multiple(
+    async fn receive_loop(
         &self,
-        is_ext_mode: bool,
-        inter_frame: Duration,
-        total_guard: Duration,
-    ) -> Result<Vec<EcuResponse, 8>, IsoTpError> {
-        let mut responses: Vec<EcuResponse, 8> = Vec::new();
-
-        let _ = with_timeout(total_guard, async {
-            loop {
-                if let Ok(Ok(frame)) = with_timeout(inter_frame, self.driver.receive()).await {
-                    let (id, is_ext) = match frame.id() {
-                        Id::Standard(s) => (s.as_raw() as u32, false),
-                        Id::Extended(e) => (e.as_raw(), true),
-                    };
-
-                    if is_ext_mode != is_ext {
-                        continue;
-                    }
-
-                    let valid_resp = if is_ext_mode {
-                        (id & 0xFFFF0000) == 0x18DA0000
-                    } else {
-                        (0x7E8..=0x7EF).contains(&id)
-                    };
-
-                    if valid_resp {
-                        let d = frame.data();
-                        if !d.is_empty() {
-                            let len = (d[0] & 0x0F) as usize;
-                            if len <= 7
-                                && PciType::from_byte(d[0])
-                                    .map_or(false, |p| matches!(p, PciType::SingleFrame))
-                            {
-                                let mut entry = Vec::new();
-                                entry.extend_from_slice(&d[1..1 + len]).ok();
-                                if !responses.iter().any(|r| r.id == id) {
-                                    responses.push(EcuResponse { id, data: entry }).ok();
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    break;
-                }
+        state: &mut TransferState,
+        target_id: Id,
+    ) -> Result<Vec<u8, 64>, IsoTpError> {
+        loop {
+            let frame = self
+                .driver
+                .receive()
+                .await
+                .map_err(|_| IsoTpError::DriverError)?;
+            if frame.id() == target_id && self.process_frame(state, &frame).await? {
+                return Ok(core::mem::replace(&mut state.buffer, Vec::new()));
             }
-        })
-        .await;
+        }
+    }
 
-        if responses.is_empty() {
+    async fn process_frame(
+        &self,
+        state: &mut TransferState,
+        frame: &D::Frame,
+    ) -> Result<bool, IsoTpError> {
+        let d = frame.data();
+        if d.is_empty() {
+            return Ok(false);
+        }
+        match PciType::from_byte(d[0]) {
+            Some(PciType::SingleFrame) => self.handle_sf(state, d),
+            Some(PciType::FirstFrame) => self.handle_ff(state, frame.id(), d).await,
+            Some(PciType::ConsecutiveFrame) => Ok(self.handle_cf(state, d)),
+            _ => Ok(false),
+        }
+    }
+
+    async fn handle_ff(
+        &self,
+        state: &mut TransferState,
+        id: Id,
+        d: &[u8],
+    ) -> Result<bool, IsoTpError> {
+        state.expected_len = (((d[0] & 0x0F) as usize) << 8) | (d[1] as usize);
+        state.buffer.extend_from_slice(&d[2..]).ok();
+        self.send_flow_control(self.get_fc_id(id)).await?;
+        Ok(false)
+    }
+
+    fn handle_sf(&self, state: &mut TransferState, d: &[u8]) -> Result<bool, IsoTpError> {
+        let len = (d[0] & 0x0F) as usize;
+        if len == 0 || len > 7 {
+            return Ok(false);
+        }
+        state.buffer.extend_from_slice(&d[1..1 + len]).ok();
+        Ok(true)
+    }
+
+    fn handle_cf(&self, state: &mut TransferState, d: &[u8]) -> bool {
+        if (d[0] & 0x0F) != state.next_sn {
+            return false;
+        }
+        let to_copy = core::cmp::min(state.expected_len - state.buffer.len(), 7);
+        state.buffer.extend_from_slice(&d[1..1 + to_copy]).ok();
+        state.next_sn = (state.next_sn + 1) % 16;
+        state.buffer.len() >= state.expected_len
+    }
+
+    pub async fn collect_multiple(
+        &self,
+        is_ext: bool,
+        inter: Duration,
+        total: Duration,
+    ) -> Result<Vec<EcuResponse, 8>, IsoTpError> {
+        let mut res: Vec<EcuResponse, 8> = Vec::new();
+        let mut states: Vec<TransferState, 8> = Vec::new();
+        let _ = with_timeout(
+            total,
+            self.collection_loop(&mut res, &mut states, is_ext, inter),
+        )
+        .await;
+        if res.is_empty() {
             Err(IsoTpError::Timeout)
         } else {
-            Ok(responses)
+            Ok(res)
+        }
+    }
+
+    async fn collection_loop(
+        &self,
+        res: &mut Vec<EcuResponse, 8>,
+        states: &mut Vec<TransferState, 8>,
+        is_ext: bool,
+        inter: Duration,
+    ) {
+        loop {
+            let frame = with_timeout(inter, self.driver.receive()).await;
+            let Ok(Ok(f)) = frame else {
+                break;
+            };
+            self.handle_collection_step(res, states, f, is_ext).await;
+        }
+    }
+
+    async fn handle_collection_step(
+        &self,
+        res: &mut Vec<EcuResponse, 8>,
+        states: &mut Vec<TransferState, 8>,
+        f: D::Frame,
+        is_ext_mode: bool,
+    ) {
+        let (id_raw, is_f_ext) = match f.id() {
+            Id::Standard(s) => (s.as_raw() as u32, false),
+            Id::Extended(e) => (e.as_raw(), true),
+        };
+        if is_ext_mode != is_f_ext || !self.is_valid_resp(id_raw, is_ext_mode) {
+            return;
+        }
+        let state = self.get_or_create_state(states, id_raw);
+        if let Some(s) = state {
+            if self.process_frame(s, &f).await.unwrap_or(false) {
+                let data = core::mem::replace(&mut s.buffer, Vec::new());
+                if !res.iter().any(|r| r.id == id_raw) {
+                    res.push(EcuResponse { id: id_raw, data }).ok();
+                }
+            }
+        }
+    }
+
+    fn get_or_create_state<'a>(
+        &self,
+        states: &'a mut Vec<TransferState, 8>,
+        id: u32,
+    ) -> Option<&'a mut TransferState> {
+        if let Some(idx) = states.iter().position(|s| s.id == id) {
+            return Some(&mut states[idx]);
+        }
+        states
+            .push(TransferState {
+                id,
+                expected_len: 0,
+                next_sn: 1,
+                buffer: Vec::new(),
+            })
+            .ok()?;
+        states.last_mut()
+    }
+
+    fn is_valid_resp(&self, id: u32, is_ext: bool) -> bool {
+        if is_ext {
+            (id & 0xFFFF0000) == 0x18DA0000
+        } else {
+            (0x7E8..=0x7EF).contains(&id)
         }
     }
 
