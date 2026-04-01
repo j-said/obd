@@ -17,7 +17,7 @@ esp-alloc = { git = "https://github.com/esp-rs/esp-hal", package = "esp-alloc", 
 esp-bootloader-esp-idf = { git = "https://github.com/esp-rs/esp-hal", features = ["esp32c3", "defmt", "esp-rom-sys"]}
 
 # Embassy
-embassy-executor = { version = "0.9.1" } 
+embassy-executor = { version = "0.10" } 
 embassy-time = "0.5.0" 
 embassy-sync = "0.7.2" 
 embassy-futures = "0.1.2" 
@@ -47,17 +47,6 @@ heapless = { version = "0.9.2", features = ["portable-atomic", "serde"] }
 portable-atomic = { version = "1.13.1", default-features = false }
 static_cell = "2.1.1"
 
-# [patch."https://github.com/esp-rs/esp-hal"]
-# esp-hal = { path = "/home/j-said/cloned-repoes/esp-hal/esp-hal" }
-# esp-sync = { path = "/home/j-said/cloned-repoes/esp-hal/esp-sync" }
-# esp-radio = { path = "/home/j-said/cloned-repoes/esp-hal/esp-radio" }
-# esp-rtos = { path = "/home/j-said/cloned-repoes/esp-hal/esp-rtos" }
-# esp-alloc = { path = "/home/j-said/cloned-repoes/esp-hal/esp-alloc" }
-# esp-rom-sys = { path = "/home/j-said/cloned-repoes/esp-hal/esp-rom-sys" }
-# esp-config = { path = "/home/j-said/cloned-repoes/esp-hal/esp-config" }
-# esp-metadata-generated = { path = "/home/j-said/cloned-repoes/esp-hal/esp-metadata-generated" }
-# esp-riscv-rt = { path = "/home/j-said/cloned-repoes/esp-hal/esp-riscv-rt" }
-# esp-hal-procmacros = { path = "/home/j-said/cloned-repoes/esp-hal/esp-hal-procmacros" }
 
 [profile.release]
 codegen-units = 1

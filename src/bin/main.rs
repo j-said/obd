@@ -97,12 +97,14 @@ async fn main(spawner: Spawner) {
     let peripheral = host.peripheral;
     let runner = host.runner;
 
-    spawner.spawn(ble_runner_task(runner)).unwrap();
+    spawner
+        .spawn(ble_runner_task(runner)
+        .expect("Failed to spawn BLE runner task"));
     info!("BLE runner task started");
 
     spawner
-        .spawn(ble_service_task(stack, peripheral, obd2))
-        .unwrap();
+        .spawn(ble_service_task(stack, peripheral, obd2)
+        .expect("Failed to spawn BLE service task"));
     info!("BLE servise task started");
 
     // -- End
@@ -169,3 +171,11 @@ async fn ble_service_task(
         }
     }
 }
+
+// TODO: Add logic to switch the CAN is_extended flag based on the ECU responses if needed in the future.
+// TODO: Add support for autonomous DTC monitoring and reporting via BLE notifications if needed in the future.
+// TODO: Implement logging for debugging purposes, especially for cases where the ECU response is unexpected or malformed.
+
+// TODO: Add support for WWH-OBD
+// TODO: Add support for UDS (Unified Diagnostic Services)
+// TODO: Add storing to the external SD card via SPI

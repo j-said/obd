@@ -85,3 +85,12 @@ impl<D: AsyncCanDriver> Obd2Service<D> {
         Err(IsoTpError::InvalidSequence)
     }
 }
+
+// TODO: Add more OBD-II services as needed, such as Service 0x09 for more PIDs, Service 0x0A for permanent DTCs, etc.
+// TODO: Implement support for sending physical requests to specific ECUs, not just functional requests.
+// TODO: Add error handling for cases where the ECU does not respond or returns an error code.
+// TODO: Consider adding support for OBD-II over CAN FD if needed in the future.
+// TODO: Add unit tests for the Obd2Service methods, possibly using a mock IsoTpHandler to simulate ECU responses.
+// TODO: Implement logging for debugging purposes.
+
+// TODO: Add the feuture flag to support SPI-based CAN drivers
