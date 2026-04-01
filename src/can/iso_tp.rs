@@ -68,11 +68,17 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         Self { driver }
     }
 
-    fn get_fc_id(&self, target_id: Id) -> Id {
+    fn get_fc_id(&self, target_id: Id) -> Result<Id, IsoTpError> {
         match target_id {
-            Id::Standard(std) => Id::Standard(StandardId::new(std.as_raw() - 8).unwrap()),
+            Id::Standard(std) => {
+                let raw = std.as_raw();
+                if raw < 8 {
+                    return Err(IsoTpError::InvalidId);
+                }
+                Ok(Id::Standard(StandardId::new(raw - 8).unwrap()))
+            }
             Id::Extended(ext) => {
-                Id::Extended(ExtendedId::new(self.swap_ext_addr(ext.as_raw())).unwrap())
+                Ok(Id::Extended(ExtendedId::new(self.swap_ext_addr(ext.as_raw())).unwrap()))
             }
         }
     }
@@ -168,7 +174,7 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         match PciType::from_byte(d[0]) {
             Some(PciType::SingleFrame) => self.handle_sf(state, d),
             Some(PciType::FirstFrame) => self.handle_ff(state, frame.id(), d).await,
-            Some(PciType::ConsecutiveFrame) => Ok(self.handle_cf(state, d)),
+            Some(PciType::ConsecutiveFrame) => self.handle_cf(state, d),
             _ => Ok(false),
         }
     }
@@ -179,9 +185,12 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         id: Id,
         d: &[u8],
     ) -> Result<bool, IsoTpError> {
+        if d.len() < 3 {
+            return Ok(false);
+        }
         state.expected_len = (((d[0] & 0x0F) as usize) << 8) | (d[1] as usize);
-        state.buffer.extend_from_slice(&d[2..]).ok();
-        self.send_flow_control(self.get_fc_id(id)).await?;
+        state.buffer.extend_from_slice(&d[2..]).map_err(|_| IsoTpError::BufferOverflow)?;
+        self.send_flow_control(self.get_fc_id(id)?).await?;
         Ok(false)
     }
 
@@ -190,18 +199,21 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         if len == 0 || len > 7 {
             return Ok(false);
         }
-        state.buffer.extend_from_slice(&d[1..1 + len]).ok();
+        if d.len() < 1 + len {
+            return Ok(false);
+        }
+        state.buffer.extend_from_slice(&d[1..1 + len]).map_err(|_| IsoTpError::BufferOverflow)?;
         Ok(true)
     }
 
-    fn handle_cf(&self, state: &mut TransferState, d: &[u8]) -> bool {
-        if (d[0] & 0x0F) != state.next_sn {
-            return false;
+    fn handle_cf(&self, state: &mut TransferState, d: &[u8]) -> Result<bool, IsoTpError> {
+        if d.is_empty() || (d[0] & 0x0F) != state.next_sn {
+            return Ok(false);
         }
         let to_copy = core::cmp::min(state.expected_len - state.buffer.len(), 7);
-        state.buffer.extend_from_slice(&d[1..1 + to_copy]).ok();
+        state.buffer.extend_from_slice(&d[1..1 + to_copy]).map_err(|_| IsoTpError::BufferOverflow)?;
         state.next_sn = (state.next_sn + 1) % 16;
-        state.buffer.len() >= state.expected_len
+        Ok(state.buffer.len() >= state.expected_len)
     }
 
     pub async fn collect_multiple(
@@ -258,9 +270,9 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         if let Some(s) = state {
             if self.process_frame(s, &f).await.unwrap_or(false) {
                 let data = core::mem::replace(&mut s.buffer, Vec::new());
-                if !res.iter().any(|r| r.id == id_raw) {
-                    res.push(EcuResponse { id: id_raw, data }).ok();
-                }
+                s.expected_len = 0;
+                s.next_sn = 1;
+                res.push(EcuResponse { id: id_raw, data }).ok();
             }
         }
     }
