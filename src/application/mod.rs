@@ -25,13 +25,11 @@ where
             break;
         }
 
-        // --- ЛОГУВАННЯ ВХІДНИХ ДАНИХ ---
         if let Ok(raw_str) = core::str::from_utf8(&in_buf[..n]) {
             info!("RX ({} bytes): {}", n, raw_str);
         } else {
             info!("RX ({} bytes): <Binary data>", n);
         }
-        // ------------------------------
 
         if let Ok((req, _)) = serde_json_core::from_slice::<Request>(&in_buf[..n]) {
             let id = req.id;
@@ -114,6 +112,7 @@ where
             };
 
             if let Ok(len) = ser_result {
+                info!("TX ({} bytes): {}", len, ser_result.unwrap());
                 let _ = stream.write_all(&out_buf[..len]).await;
             }
         } else {
@@ -126,6 +125,7 @@ where
                 },
                 &mut out_buf,
             ) {
+                info!("TX ({} bytes): {}", len, "Invalid request format");
                 let _ = stream.write_all(&out_buf[..len]).await;
             }
         }
