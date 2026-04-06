@@ -1,0 +1,113 @@
+name: Auto Label
+
+on:
+  issues:
+    types: [opened, edited]
+  pull_request:
+    types: [opened, edited, synchronize]
+
+jobs:
+  label-issues:
+    name: Label Issues by Keywords
+    runs-on: ubuntu-latest
+    if: github.event_name == 'issues'
+    permissions:
+      issues: write
+    steps:
+      - name: Apply labels based on issue title/body
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const title  = (issue.title  || '').toLowerCase();
+            const body   = (issue.body   || '').toLowerCase();
+            const text   = `${title} ${body}`;
+
+            const labelMap = [
+              { keywords: ['bug', 'error', 'crash', 'fail', 'broken'],           label: 'bug'           },
+              { keywords: ['feature', 'enhancement', 'request', 'add support'],  label: 'enhancement'   },
+              { keywords: ['doc', 'documentation', 'readme', 'comment'],         label: 'documentation' },
+              { keywords: ['ci', 'cd', 'pipeline', 'workflow', 'action'],        label: 'ci/cd'         },
+              { keywords: ['docker', 'container', 'image'],                      label: 'docker'        },
+              { keywords: ['bluetooth', 'ble', 'bt-hci', 'trouble-host'],        label: 'bluetooth'     },
+              { keywords: ['can bus', 'canbus', 'obd', 'j1939'],                 label: 'can-bus'       },
+              { keywords: ['security', 'vulnerability', 'cve', 'audit'],         label: 'security'      },
+              { keywords: ['performance', 'slow', 'memory', 'optimize'],         label: 'performance'   },
+              { keywords: ['question', 'help', 'how to', 'how do'],              label: 'question'      },
+            ];
+
+            const candidates = [];
+            for (const { keywords, label } of labelMap) {
+              if (keywords.some(kw => text.includes(kw))) {
+                candidates.push(label);
+              }
+            }
+
+            if (candidates.length > 0) {
+              // Verify each label exists in the repo before applying
+              const labelsToAdd = [];
+              for (const labelName of candidates) {
+                try {
+                  await github.rest.issues.getLabel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    name: labelName,
+                  });
+                  labelsToAdd.push(labelName);
+                } catch {
+                  console.log(`Label '${labelName}' not found in repo, skipping`);
+                }
+              }
+
+              if (labelsToAdd.length > 0) {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  labels: labelsToAdd,
+                });
+                console.log(`Added labels: ${labelsToAdd.join(', ')}`);
+              }
+            }
+
+  label-pr:
+    name: Label PRs by Changed Files
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Apply labels based on changed files
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+            });
+
+            const paths = files.map(f => f.filename);
+            const labelsToAdd = new Set();
+
+            for (const path of paths) {
+              if (path.startsWith('.github/'))           labelsToAdd.add('ci/cd');
+              if (path === 'Dockerfile' || path.toLowerCase().includes('docker')) labelsToAdd.add('docker');
+              if (path.startsWith('src/'))               labelsToAdd.add('firmware');
+              if (path.startsWith('tests/'))             labelsToAdd.add('testing');
+              if (path === 'Cargo.toml' || path === 'Cargo.lock') labelsToAdd.add('dependencies');
+              if (path.endsWith('.md'))                  labelsToAdd.add('documentation');
+            }
+
+            if (labelsToAdd.size > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: [...labelsToAdd],
+              }).catch(e => console.log(`Label apply warning: ${e.message}`));
+              console.log(`Added labels: ${[...labelsToAdd].join(', ')}`);
+            }

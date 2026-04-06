@@ -1,0 +1,73 @@
+---
+name: Bug Report
+description: Report a reproducible bug in the firmware
+title: "[Bug]: "
+labels: ["bug", "triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report! Please fill in as much detail as possible.
+
+  - type: input
+    id: firmware-version
+    attributes:
+      label: Firmware Version / Commit SHA
+      description: Which version or commit SHA are you running?
+      placeholder: "e.g. v0.2.1 or abc1234"
+    validations:
+      required: true
+
+  - type: input
+    id: hardware
+    attributes:
+      label: Hardware
+      description: What hardware are you using?
+      placeholder: "e.g. ESP32-C3 DevKit, custom PCB rev 2"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: Describe the unexpected behaviour …
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Step-by-step instructions to reproduce the issue.
+      placeholder: |
+        1. Flash firmware with `cargo espflash flash --release`
+        2. Connect via BLE
+        3. Send OBD request …
+        4. Observe crash / wrong data / hang
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behaviour
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behaviour
+      description: What actually happened? Paste logs / defmt output if available.
+      render: text
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional Context
+      description: Any other information (oscilloscope captures, schematic snippets, etc.)

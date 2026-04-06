@@ -1,0 +1,148 @@
+name: Daily Organisation Report
+
+on:
+  schedule:
+    # Run every day at 07:00 UTC (start of business)
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  daily-report:
+    name: Generate Daily Activity Report
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate report
+        id: report
+        uses: actions/github-script@v7
+        with:
+          result-encoding: string
+          script: |
+            const now   = new Date();
+            const since = new Date(now - 24 * 60 * 60 * 1000).toISOString(); // last 24 h
+
+            // ── Helper ──────────────────────────────────────────────────────
+            async function paginate(fn, params) {
+              const items = [];
+              let page = 1;
+              while (true) {
+                const { data } = await fn({ ...params, per_page: 100, page });
+                if (!data.length) break;
+                items.push(...data);
+                if (data.length < 100) break;
+                page++;
+              }
+              return items;
+            }
+
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+
+            // ── Commits ─────────────────────────────────────────────────────
+            let commits = [];
+            try {
+              commits = await paginate(github.rest.repos.listCommits, {
+                owner, repo, since,
+              });
+            } catch { /* shallow clone may lack history */ }
+
+            // ── Issues ──────────────────────────────────────────────────────
+            const openedIssues = await paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'open', since, filter: 'all',
+            });
+
+            const closedIssues = await paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'closed', since, filter: 'all',
+            });
+
+            // ── Pull Requests ────────────────────────────────────────────────
+            const openPRs = await paginate(github.rest.pulls.list, {
+              owner, repo, state: 'open', sort: 'updated', direction: 'desc',
+            });
+
+            const recentOpenPRs   = openPRs.filter(pr => new Date(pr.created_at) >= new Date(since));
+            const recentUpdatedPRs = openPRs.filter(pr =>
+              new Date(pr.updated_at) >= new Date(since) &&
+              new Date(pr.created_at)  < new Date(since)
+            );
+
+            // ── Workflow Runs ────────────────────────────────────────────────
+            // Fetch recent runs and filter client-side to avoid API date-format quirks
+            const { data: runsData } = await github.rest.actions.listWorkflowRunsForRepo({
+              owner, repo, per_page: 100,
+            });
+            const recentRuns = (runsData.workflow_runs || []).filter(
+              r => new Date(r.created_at) >= new Date(since)
+            );
+            const failedRuns   = recentRuns.filter(r => r.conclusion === 'failure');
+            const successRuns  = recentRuns.filter(r => r.conclusion === 'success');
+
+            // ── Format report ────────────────────────────────────────────────
+            const fmt = d => new Date(d).toUTCString();
+            const dateStr = now.toISOString().split('T')[0];
+
+            let body = `## 📊 Daily Activity Report — ${dateStr}\n\n`;
+            body += `> Report covers the last 24 hours (since ${fmt(since)})\n\n`;
+
+            // Commits
+            body += `### 🔨 Commits (${commits.length})\n`;
+            if (commits.length > 0) {
+              commits.slice(0, 10).forEach(c => {
+                const msg    = c.commit.message.split('\n')[0].slice(0, 72);
+                const author = c.commit.author.name;
+                body += `- [\`${c.sha.slice(0,7)}\`](${c.html_url}) ${msg} — *${author}*\n`;
+              });
+              if (commits.length > 10) body += `- … and ${commits.length - 10} more\n`;
+            } else {
+              body += '_No commits in the last 24 hours._\n';
+            }
+
+            // Issues
+            body += `\n### 🐛 Issues\n`;
+            body += `- **Opened:** ${openedIssues.filter(i => !i.pull_request).length}\n`;
+            body += `- **Closed:** ${closedIssues.filter(i => !i.pull_request).length}\n`;
+            openedIssues.filter(i => !i.pull_request).slice(0, 5).forEach(i => {
+              body += `  - [#${i.number}](${i.html_url}) ${i.title}\n`;
+            });
+
+            // PRs
+            body += `\n### 🔀 Pull Requests\n`;
+            body += `- **Opened:** ${recentOpenPRs.length}\n`;
+            body += `- **Updated:** ${recentUpdatedPRs.length}\n`;
+            recentOpenPRs.slice(0, 5).forEach(pr => {
+              body += `  - [#${pr.number}](${pr.html_url}) ${pr.title} — *${pr.user.login}*\n`;
+            });
+
+            // CI/CD
+            body += `\n### ⚙️ CI/CD Workflow Runs\n`;
+            body += `- **Successful:** ${successRuns.length}\n`;
+            body += `- **Failed:** ${failedRuns.length}\n`;
+            failedRuns.slice(0, 5).forEach(r => {
+              body += `  - ❌ [${r.name}](${r.html_url}) on \`${r.head_branch}\`\n`;
+            });
+
+            body += `\n---\n_Generated automatically by the [Daily Report workflow](https://github.com/${owner}/${repo}/actions/workflows/daily-report.yml)_\n`;
+
+            return body;
+
+      - name: Create report issue
+        uses: actions/github-script@v7
+        env:
+          REPORT_BODY: ${{ steps.report.outputs.result }}
+        with:
+          script: |
+            const dateStr = new Date().toISOString().split('T')[0];
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              title: `📊 Daily Activity Report — ${dateStr}`,
+              body:  process.env.REPORT_BODY,
+              labels: ['report', 'automated'],
+            });
