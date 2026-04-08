@@ -309,13 +309,14 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         frame: &D::Frame,
     ) -> Result<bool, IsoTpError> {
         let d = frame.data();
-        if d.is_empty() {
+        let o = self.pci_offset();
+        if d.len() <= o {
             return Ok(false);
         }
-        match PciType::from_byte(d[0]) {
-            Some(PciType::SingleFrame) => self.handle_sf(state, d),
-            Some(PciType::FirstFrame) => self.handle_ff(state, frame.id(), d).await,
-            Some(PciType::ConsecutiveFrame) => self.handle_cf(state, d),
+        match PciType::from_byte(d[o]) {
+            Some(PciType::SingleFrame) => self.handle_sf(state, &d[o..]),
+            Some(PciType::FirstFrame) => self.handle_ff(state, frame.id(), &d[o..]).await,
+            Some(PciType::ConsecutiveFrame) => self.handle_cf(state, &d[o..]),
             _ => Ok(false),
         }
     }
@@ -490,11 +491,12 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
                 continue;
             }
             let d = frame.data();
-            if d.len() < 3 || d[0] >> 4 != PciType::FlowControl as u8 {
+            let o = self.pci_offset();
+            if d.len() < o + 3 || d[o] >> 4 != PciType::FlowControl as u8 {
                 continue;
             }
-            match FlowStatus::from_nibble(d[0])? {
-                FlowStatus::ContinueToSend => return Ok((d[1], d[2])),
+            match FlowStatus::from_nibble(d[o])? {
+                FlowStatus::ContinueToSend => return Ok((d[o + 1], d[o + 2])),
                 FlowStatus::Wait => {
                     *wft_count += 1;
                     if *wft_count >= N_WFTMAX {
