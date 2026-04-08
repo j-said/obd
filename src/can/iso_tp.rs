@@ -24,6 +24,17 @@ enum FlowStatus {
     Overflow = 2,
 }
 
+impl FlowStatus {
+    fn from_nibble(n: u8) -> Result<Self, IsoTpError> {
+        match n & 0x0F {
+            0 => Ok(Self::ContinueToSend),
+            1 => Ok(Self::Wait),
+            2 => Ok(Self::Overflow),
+            _ => Err(IsoTpError::InvalidFs),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum IsoTpError {
     /// N_As / N_Ar: TX or RX frame acknowledge timeout
@@ -97,9 +108,9 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
                 }
                 Ok(Id::Standard(StandardId::new(raw - 8).unwrap()))
             }
-            Id::Extended(ext) => {
-                Ok(Id::Extended(ExtendedId::new(self.swap_ext_addr(ext.as_raw())).unwrap()))
-            }
+            Id::Extended(ext) => Ok(Id::Extended(
+                ExtendedId::new(self.swap_ext_addr(ext.as_raw())).unwrap(),
+            )),
         }
     }
 
@@ -160,9 +171,7 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
             next_sn: 1,
             buffer: Vec::new(),
         };
-        with_timeout(N_CR_TIMEOUT, self.receive_loop(&mut state, target_id))
-            .await
-            .map_err(|_| IsoTpError::TimeoutCr)?
+        self.receive_loop(&mut state, target_id).await
     }
 
     async fn receive_loop(
@@ -171,10 +180,9 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         target_id: Id,
     ) -> Result<Vec<u8, 256>, IsoTpError> {
         loop {
-            let frame = self
-                .driver
-                .receive()
+            let frame = with_timeout(N_CR_TIMEOUT, self.driver.receive())
                 .await
+                .map_err(|_| IsoTpError::TimeoutCr)?
                 .map_err(|_| IsoTpError::DriverError)?;
             if frame.id() == target_id && self.process_frame(state, &frame).await? {
                 return Ok(core::mem::replace(&mut state.buffer, Vec::new()));
@@ -208,35 +216,62 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         if d.len() < 3 {
             return Ok(false);
         }
-        state.rx_dl = (((d[0] & 0x0F) as usize) << 8) | (d[1] as usize);
-        state.next_sn = 1;
+        let ff_dl = (((d[0] & 0x0F) as usize) << 8) | (d[1] as usize);
+        // 4.2.1: FF_DL must be ≥ 8 for normal addressing (ISO 15765-2 §9.6.2.2)
+        if ff_dl < 8 {
+            return Ok(false);
+        }
+        let fc_id = self.get_fc_id(id)?;
+        // 4.2.2: FF_DL exceeds our buffer — send FC(OVFLW) and abort
+        if ff_dl > 256 {
+            self.send_flow_control(fc_id, FlowStatus::Overflow).await?;
+            return Err(IsoTpError::BufferOverflow);
+        }
+        state.rx_dl = ff_dl;
+        state.next_sn = 1; // 4.2.3
         state.buffer.clear();
-        state.buffer.extend_from_slice(&d[2..]).map_err(|_| IsoTpError::BufferOverflow)?;
-        self.send_flow_control(self.get_fc_id(id)?).await?;
+        // 4.2.5: copy exactly 6 payload bytes for normal addressing (bytes 2–7 of classic CAN frame)
+        let payload_end = d.len().min(8);
+        state
+            .buffer
+            .extend_from_slice(&d[2..payload_end])
+            .map_err(|_| IsoTpError::BufferOverflow)?;
+        // 4.2.6: N_Cr timer starts after FC is sent; per-iteration timeout in receive_loop covers this
+        self.send_flow_control(fc_id, FlowStatus::ContinueToSend)
+            .await?;
         Ok(false)
     }
 
     fn handle_sf(&self, state: &mut TransferState, d: &[u8]) -> Result<bool, IsoTpError> {
         let len = (d[0] & 0x0F) as usize;
+        // Normal addressing: SF_DL ∈ [1, 7]; extended addressing would cap at 6 (not yet supported)
         if len == 0 || len > 7 {
             return Ok(false);
         }
+        // 4.1.2: N_UNEXP_PDU — frame too short to contain the declared payload
         if d.len() < 1 + len {
             return Ok(false);
         }
-        state.buffer.extend_from_slice(&d[1..1 + len]).map_err(|_| IsoTpError::BufferOverflow)?;
+        state
+            .buffer
+            .extend_from_slice(&d[1..1 + len])
+            .map_err(|_| IsoTpError::BufferOverflow)?;
         Ok(true)
     }
 
     fn handle_cf(&self, state: &mut TransferState, d: &[u8]) -> Result<bool, IsoTpError> {
-        if d.is_empty() {
+        // 4.3.2: need at least PCI byte + 1 data byte before indexing d[1]
+        if d.len() < 2 {
             return Ok(false);
         }
         if (d[0] & 0x0F) != state.next_sn {
             return Err(IsoTpError::WrongSn);
         }
         let to_copy = core::cmp::min(state.rx_dl - state.buffer.len(), 7);
-        state.buffer.extend_from_slice(&d[1..1 + to_copy]).map_err(|_| IsoTpError::BufferOverflow)?;
+        state
+            .buffer
+            .extend_from_slice(&d[1..1 + to_copy])
+            .map_err(|_| IsoTpError::BufferOverflow)?;
         state.next_sn = (state.next_sn + 1) % 16;
         Ok(state.buffer.len() >= state.rx_dl)
     }
@@ -329,9 +364,39 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         }
     }
 
-    async fn send_flow_control(&self, target_id: Id) -> Result<(), IsoTpError> {
+    /// Await an FC frame on `fc_id` with N_Bs timeout, handling WAIT/OVFLW/reserved FS.
+    /// Returns `(BS, STmin)` on FC(CTS). Called by the multi-frame TX path (not yet wired in).
+    #[allow(dead_code)]
+    async fn receive_fc(&self, fc_id: Id, wft_count: &mut u8) -> Result<(u8, u8), IsoTpError> {
+        loop {
+            let frame = with_timeout(N_BS_TIMEOUT, self.driver.receive())
+                .await
+                .map_err(|_| IsoTpError::TimeoutBs)?
+                .map_err(|_| IsoTpError::DriverError)?;
+            if frame.id() != fc_id {
+                continue;
+            }
+            let d = frame.data();
+            if d.len() < 3 || d[0] >> 4 != PciType::FlowControl as u8 {
+                continue;
+            }
+            match FlowStatus::from_nibble(d[0])? {
+                FlowStatus::ContinueToSend => return Ok((d[1], d[2])),
+                FlowStatus::Wait => {
+                    *wft_count += 1;
+                    if *wft_count >= N_WFTMAX {
+                        return Err(IsoTpError::WftOverrun);
+                    }
+                    // N_Bs timer restarts implicitly on the next loop iteration
+                }
+                FlowStatus::Overflow => return Err(IsoTpError::BufferOverflow),
+            }
+        }
+    }
+
+    async fn send_flow_control(&self, target_id: Id, fs: FlowStatus) -> Result<(), IsoTpError> {
         let fc = [
-            (PciType::FlowControl as u8) << 4 | FlowStatus::ContinueToSend as u8,
+            (PciType::FlowControl as u8) << 4 | fs as u8,
             0x00, // BS = 0: no block size limit
             0x00, // STmin = 0: no minimum separation time
             PADDING_BYTE,
@@ -357,4 +422,4 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
 // TODO: Add support for concurrent transfers (currently assumes only one transfer at a time)
 // TODO: Add support for cancellation of transfers (currently no way to cancel an ongoing transfer)
 
-// TODO: Add iso-tp feutures build flags 
+// TODO: Add iso-tp feutures build flags
