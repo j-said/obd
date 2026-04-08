@@ -35,6 +35,15 @@ impl FlowStatus {
     }
 }
 
+/// ISO 15765-2 §7 — network layer addressing modes
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddressingMode {
+    /// Normal addressing: PCI at byte[0], max SF payload 7 bytes
+    Normal,
+    /// Extended addressing: byte[0] = N_TA, PCI at byte[1], max SF payload 6 bytes
+    Extended,
+}
+
 #[derive(Debug)]
 pub enum IsoTpError {
     /// N_As / N_Ar: TX or RX frame acknowledge timeout
