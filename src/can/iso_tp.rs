@@ -101,11 +101,26 @@ impl PciType {
 
 pub struct IsoTpHandler<D> {
     driver: D,
+    addressing: AddressingMode,
+    /// N_TA byte prepended to every frame in Extended addressing mode
+    target_addr: u8,
 }
 
 impl<D: AsyncCanDriver> IsoTpHandler<D> {
     pub fn new(driver: D) -> Self {
-        Self { driver }
+        Self { driver, addressing: AddressingMode::Normal, target_addr: 0 }
+    }
+
+    pub fn new_extended(driver: D, target_addr: u8) -> Self {
+        Self { driver, addressing: AddressingMode::Extended, target_addr }
+    }
+
+    /// Byte offset at which the PCI byte starts (0 for Normal, 1 for Extended).
+    fn pci_offset(&self) -> usize {
+        match self.addressing {
+            AddressingMode::Normal => 0,
+            AddressingMode::Extended => 1,
+        }
     }
 
     fn get_fc_id(&self, target_id: Id) -> Result<Id, IsoTpError> {
