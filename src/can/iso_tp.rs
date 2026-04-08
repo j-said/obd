@@ -3,19 +3,26 @@ use embassy_time::{Duration, with_timeout};
 use embedded_can::{ExtendedId, Frame, Id, StandardId};
 use heapless::Vec;
 
-// FC = Flow Control
-// PCI = Protocol Control Information
-// cf = Consecutive Frame
-// FF = First Frame
-// SF = Single Frame
-// SN = Sequence Number
+const PADDING_BYTE: u8 = 0xCC;
 
-const PADDING_BYTE: u8 = 0xAA;
-const FC_PCI_BYTE: u8 = 0x30;
+/// ISO 15765-2 §6.7.2 — sender TX-confirm timeout
+const N_AS_TIMEOUT: Duration = Duration::from_millis(1000);
+/// ISO 15765-2 §6.7.2 — sender wait-for-FC timeout
+const N_BS_TIMEOUT: Duration = Duration::from_millis(1000);
+/// ISO 15765-2 §6.7.2 — receiver wait-for-CF timeout
+const N_CR_TIMEOUT: Duration = Duration::from_millis(1000);
+/// ISO 15765-2 §6.7.6 — maximum consecutive FC.WAIT frames before abort
+const N_WFTMAX: u8 = 10;
 
-const TIMEOUT_SINGLE: Duration = Duration::from_millis(1000);
 const TIMEOUT_INTER_FRAME: Duration = Duration::from_millis(100);
 const TIMEOUT_TOTAL: Duration = Duration::from_millis(500);
+
+#[repr(u8)]
+enum FlowStatus {
+    ContinueToSend = 0,
+    Wait = 1,
+    Overflow = 2,
+}
 
 #[derive(Debug)]
 pub enum IsoTpError {
@@ -150,7 +157,7 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
             next_sn: 1,
             buffer: Vec::new(),
         };
-        with_timeout(TIMEOUT_SINGLE, self.receive_loop(&mut state, target_id))
+        with_timeout(N_CR_TIMEOUT, self.receive_loop(&mut state, target_id))
             .await
             .map_err(|_| IsoTpError::TimeoutCr)?
     }
@@ -319,9 +326,9 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
 
     async fn send_flow_control(&self, target_id: Id) -> Result<(), IsoTpError> {
         let fc = [
-            FC_PCI_BYTE,
-            0x00,
-            0x00,
+            (PciType::FlowControl as u8) << 4 | FlowStatus::ContinueToSend as u8,
+            0x00, // BS = 0: no block size limit
+            0x00, // STmin = 0: no minimum separation time
             PADDING_BYTE,
             PADDING_BYTE,
             PADDING_BYTE,
