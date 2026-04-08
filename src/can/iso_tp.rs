@@ -1,5 +1,5 @@
 use super::AsyncCanDriver;
-use embassy_time::{Duration, Timer, with_timeout};
+use embassy_time::{Duration, Instant, Timer, with_timeout};
 use embedded_can::{ExtendedId, Frame, Id, StandardId};
 use heapless::Vec;
 
@@ -77,6 +77,8 @@ struct TransferState {
     rx_dl: usize,
     next_sn: u8,
     buffer: Vec<u8, 256>,
+    /// Timestamp of the last received frame for this ECU (for per-ECU N_Cr tracking)
+    last_frame_at: Option<Instant>,
 }
 
 #[repr(u8)]
@@ -300,6 +302,7 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
             rx_dl: 0,
             next_sn: 1,
             buffer: Vec::new(),
+            last_frame_at: None,
         };
         // Phase 1: wait for first frame (SF or FF) — N_Cr timeout
         let first = with_timeout(N_CR_TIMEOUT, self.receive_first_frame(&mut state, target_id))
@@ -481,8 +484,16 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         if is_ext_mode != is_f_ext || !self.is_valid_resp(id_raw, is_ext_mode) {
             return;
         }
+        // Expire any ECU states that haven't received a CF within N_Cr timeout (11.2)
+        states.retain(|s| {
+            s.rx_dl == 0 // not in a multi-frame transfer yet
+                || s.last_frame_at
+                    .map_or(true, |t| t.elapsed() < N_CR_TIMEOUT)
+        });
+
         let state = self.get_or_create_state(states, id_raw);
         if let Some(s) = state {
+            s.last_frame_at = Some(Instant::now());
             // process_frame dispatches to handle_ff which sends FC(CTS) on FF receipt (11.1).
             // Errors (including FC TX failure) abort this ECU's transfer silently to keep
             // collecting from the remaining ECUs.
@@ -516,6 +527,7 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
                 rx_dl: 0,
                 next_sn: 1,
                 buffer: Vec::new(),
+                last_frame_at: None,
             })
             .ok()?;
         states.last_mut()
