@@ -488,11 +488,16 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         states.last_mut()
     }
 
+    /// Check whether a received CAN ID is a valid response ID for this handler.
+    ///
+    /// **OBD-II only:** hardcoded to the SAE J1979 / ISO 15031-5 response ID ranges:
+    /// - Normal (11-bit):  0x7E8–0x7EF  (physical responses to 0x7E0–0x7E7)
+    /// - Extended (29-bit): 0x18DA_XX_XX (UDS physical response, J1939 format)
+    ///
+    /// For non-OBD2 applications, make the valid-ID range configurable.
     fn is_valid_resp(&self, id: u32, is_ext_frame: bool) -> bool {
         match self.addressing {
-            // Normal addressing: standard frame IDs 0x7E8–0x7EF (OBD-II §10.3)
             AddressingMode::Normal => !is_ext_frame && (0x7E8..=0x7EF).contains(&id),
-            // Extended addressing: 29-bit J1939/UDS physical response IDs 0x18DA_XX_XX
             AddressingMode::Extended => is_ext_frame && (id & 0xFFFF0000) == 0x18DA0000,
         }
     }
