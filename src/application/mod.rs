@@ -28,7 +28,7 @@ where
         if let Ok(raw_str) = core::str::from_utf8(&in_buf[..n]) {
             info!("RX ({} bytes): {}", n, raw_str);
         } else {
-            info!("RX ({} bytes): <Binary data>", n);
+            warn!("RX ({} bytes): Decoding failed", n);
         }
 
         if let Ok((req, _)) = serde_json_core::from_slice::<Request>(&in_buf[..n]) {
@@ -112,7 +112,11 @@ where
             };
 
             if let Ok(len) = ser_result {
-                info!("TX ({} bytes): {}", len, ser_result.unwrap());
+                if let Ok(raw_str) = core::str::from_utf8(&out_buf[..len]) {
+                    info!("TX ({} bytes): {}", len, raw_str);
+                } else {
+                    warn!("TX ({} bytes): Decoding failed", len);
+                }
                 let _ = stream.write_all(&out_buf[..len]).await;
             }
         } else {
