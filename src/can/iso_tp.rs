@@ -1,5 +1,5 @@
 use super::AsyncCanDriver;
-use embassy_time::{Duration, with_timeout};
+use embassy_time::{Duration, Timer, with_timeout};
 use embedded_can::{ExtendedId, Frame, Id, StandardId};
 use heapless::Vec;
 
@@ -129,7 +129,12 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
                 Id::Extended(ExtendedId::new(self.swap_ext_addr(e.as_raw())).unwrap())
             }
         };
-        self.transmit_sf(target_id, data).await?;
+        // 5.4: route to multi-frame TX when payload exceeds SF capacity
+        if data.len() <= 7 {
+            self.transmit_sf(target_id, data).await?;
+        } else {
+            self.transmit_multi(target_id, resp_id, data).await?;
+        }
         self.receive_single(resp_id).await
     }
 
@@ -138,6 +143,10 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         target_id: Id,
         data: &[u8],
     ) -> Result<Vec<EcuResponse, 8>, IsoTpError> {
+        // 5.5: functional addressing only supports SF (ISO 15765-2 §9.2)
+        if data.len() > 7 {
+            return Err(IsoTpError::BufferOverflow);
+        }
         self.transmit_sf(target_id, data).await?;
         self.collect_multiple(
             matches!(target_id, Id::Extended(_)),
@@ -162,6 +171,79 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
             .transmit(&frame)
             .await
             .map_err(|_| IsoTpError::DriverError)
+    }
+
+    /// Transmit a multi-frame message via FF + CF sequence (ISO 15765-2 §9.6).
+    /// `tx_id`  — CAN ID we send on.
+    /// `fc_id`  — CAN ID we expect FC frames from (usually `resp_id`).
+    async fn transmit_multi(&self, tx_id: Id, fc_id: Id, data: &[u8]) -> Result<(), IsoTpError> {
+        let len = data.len();
+        // ISO 15765-2 §9.6.2.2: FF_DL is 12-bit, max 4095
+        if len > 0xFFF {
+            return Err(IsoTpError::BufferOverflow);
+        }
+
+        // 5.2: build and transmit FF
+        let mut ff = [PADDING_BYTE; 8];
+        ff[0] = (PciType::FirstFrame as u8) << 4 | ((len >> 8) as u8 & 0x0F);
+        ff[1] = (len & 0xFF) as u8;
+        ff[2..8].copy_from_slice(&data[..6]);
+        let frame = D::Frame::new(tx_id, &ff).ok_or(IsoTpError::DriverError)?;
+        with_timeout(N_AS_TIMEOUT, self.driver.transmit(&frame))
+            .await
+            .map_err(|_| IsoTpError::TimeoutA)?
+            .map_err(|_| IsoTpError::DriverError)?;
+
+        // 5.2: await FC(CTS) — receive_fc handles WAIT/OVFLW/reserved internally
+        let mut wft_count = 0u8;
+        let (mut bs, st_min) = self.receive_fc(fc_id, &mut wft_count).await?;
+        let mut st_min_dur = Self::st_min_duration(st_min);
+
+        // 5.3: transmit CF sequence
+        let mut sn: u8 = 1;
+        let mut block_count: u8 = 0;
+        let mut offset: usize = 6; // bytes already sent in FF
+
+        while offset < len {
+            let mut cf = [PADDING_BYTE; 8];
+            cf[0] = (PciType::ConsecutiveFrame as u8) << 4 | (sn & 0x0F);
+            let chunk_end = (offset + 7).min(len);
+            cf[1..1 + (chunk_end - offset)].copy_from_slice(&data[offset..chunk_end]);
+
+            let frame = D::Frame::new(tx_id, &cf).ok_or(IsoTpError::DriverError)?;
+            with_timeout(N_AS_TIMEOUT, self.driver.transmit(&frame))
+                .await
+                .map_err(|_| IsoTpError::TimeoutA)?
+                .map_err(|_| IsoTpError::DriverError)?;
+
+            sn = (sn + 1) % 16;
+            offset += 7;
+            block_count += 1;
+
+            if bs > 0 && block_count == bs {
+                // Block exhausted — await next FC before continuing
+                let mut wft_count = 0u8;
+                let (new_bs, new_st_min) = self.receive_fc(fc_id, &mut wft_count).await?;
+                bs = new_bs;
+                st_min_dur = Self::st_min_duration(new_st_min);
+                block_count = 0;
+            } else if offset < len {
+                // STmin separation between consecutive CFs (§6.5.4)
+                Timer::after(st_min_dur).await;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Convert FC STmin byte to a `Duration` (ISO 15765-2 §9.6.5.5).
+    fn st_min_duration(st_min: u8) -> Duration {
+        match st_min {
+            0x00 => Duration::from_millis(0),
+            v @ 0x01..=0x7F => Duration::from_millis(v as u64),
+            v @ 0xF1..=0xF9 => Duration::from_micros((v - 0xF0) as u64 * 100),
+            _ => Duration::from_millis(0), // reserved — treat as 0
+        }
     }
 
     async fn receive_single(&self, target_id: Id) -> Result<Vec<u8, 256>, IsoTpError> {
@@ -365,8 +447,7 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
     }
 
     /// Await an FC frame on `fc_id` with N_Bs timeout, handling WAIT/OVFLW/reserved FS.
-    /// Returns `(BS, STmin)` on FC(CTS). Called by the multi-frame TX path (not yet wired in).
-    #[allow(dead_code)]
+    /// Returns `(BS, STmin)` on FC(CTS).
     async fn receive_fc(&self, fc_id: Id, wft_count: &mut u8) -> Result<(u8, u8), IsoTpError> {
         loop {
             let frame = with_timeout(N_BS_TIMEOUT, self.driver.receive())
