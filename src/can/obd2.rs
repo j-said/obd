@@ -68,7 +68,7 @@ impl<D: AsyncCanDriver> Obd2Service<D> {
             .await
     }
 
-    pub async fn get_vin(&self, ecu_id: u32) -> Result<Vec<u8, 64>, IsoTpError> {
+    pub async fn get_vin(&self, ecu_id: u32) -> Result<Vec<u8, 256>, IsoTpError> {
         let mode = Obd2Command::Service09 as u8;
         let pid = Service09Pid::Vin as u8;
 

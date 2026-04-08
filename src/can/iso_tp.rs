@@ -43,17 +43,20 @@ pub enum IsoTpError {
     InvalidId,
 }
 
+// TODO: make buffer capacity a const generic on IsoTpHandler<D, const N: usize>
+//       so callers can trade memory for max PDU size (ISO-TP allows up to 4095 bytes).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct EcuResponse {
     pub id: u32,
-    pub data: Vec<u8, 64>,
+    pub data: Vec<u8, 256>,
 }
 
 struct TransferState {
     id: u32,
-    expected_len: usize,
+    /// FF_DL from the First Frame header (ISO 15765-2 §9.6.2.2)
+    rx_dl: usize,
     next_sn: u8,
-    buffer: Vec<u8, 64>,
+    buffer: Vec<u8, 256>,
 }
 
 #[repr(u8)]
@@ -108,7 +111,7 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         &self,
         target_id: Id,
         data: &[u8],
-    ) -> Result<Vec<u8, 64>, IsoTpError> {
+    ) -> Result<Vec<u8, 256>, IsoTpError> {
         let resp_id = match target_id {
             Id::Standard(s) => Id::Standard(StandardId::new(s.as_raw() + 8).unwrap()),
             Id::Extended(e) => {
@@ -150,10 +153,10 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
             .map_err(|_| IsoTpError::DriverError)
     }
 
-    async fn receive_single(&self, target_id: Id) -> Result<Vec<u8, 64>, IsoTpError> {
+    async fn receive_single(&self, target_id: Id) -> Result<Vec<u8, 256>, IsoTpError> {
         let mut state = TransferState {
             id: 0,
-            expected_len: 0,
+            rx_dl: 0,
             next_sn: 1,
             buffer: Vec::new(),
         };
@@ -166,7 +169,7 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         &self,
         state: &mut TransferState,
         target_id: Id,
-    ) -> Result<Vec<u8, 64>, IsoTpError> {
+    ) -> Result<Vec<u8, 256>, IsoTpError> {
         loop {
             let frame = self
                 .driver
@@ -205,7 +208,9 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         if d.len() < 3 {
             return Ok(false);
         }
-        state.expected_len = (((d[0] & 0x0F) as usize) << 8) | (d[1] as usize);
+        state.rx_dl = (((d[0] & 0x0F) as usize) << 8) | (d[1] as usize);
+        state.next_sn = 1;
+        state.buffer.clear();
         state.buffer.extend_from_slice(&d[2..]).map_err(|_| IsoTpError::BufferOverflow)?;
         self.send_flow_control(self.get_fc_id(id)?).await?;
         Ok(false)
@@ -230,10 +235,10 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         if (d[0] & 0x0F) != state.next_sn {
             return Err(IsoTpError::WrongSn);
         }
-        let to_copy = core::cmp::min(state.expected_len - state.buffer.len(), 7);
+        let to_copy = core::cmp::min(state.rx_dl - state.buffer.len(), 7);
         state.buffer.extend_from_slice(&d[1..1 + to_copy]).map_err(|_| IsoTpError::BufferOverflow)?;
         state.next_sn = (state.next_sn + 1) % 16;
-        Ok(state.buffer.len() >= state.expected_len)
+        Ok(state.buffer.len() >= state.rx_dl)
     }
 
     pub async fn collect_multiple(
@@ -290,7 +295,7 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         if let Some(s) = state {
             if self.process_frame(s, &f).await.unwrap_or(false) {
                 let data = core::mem::replace(&mut s.buffer, Vec::new());
-                s.expected_len = 0;
+                s.rx_dl = 0;
                 s.next_sn = 1;
                 res.push(EcuResponse { id: id_raw, data }).ok();
             }
@@ -308,7 +313,7 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         states
             .push(TransferState {
                 id,
-                expected_len: 0,
+                rx_dl: 0,
                 next_sn: 1,
                 buffer: Vec::new(),
             })
