@@ -482,11 +482,17 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         }
     }
 
-    async fn send_flow_control(&self, target_id: Id, fs: FlowStatus) -> Result<(), IsoTpError> {
+    async fn send_flow_control(
+        &self,
+        target_id: Id,
+        fs: FlowStatus,
+        bs: u8,
+        stmin: u8,
+    ) -> Result<(), IsoTpError> {
         let fc = [
             (PciType::FlowControl as u8) << 4 | fs as u8,
-            0x00, // BS = 0: no block size limit
-            0x00, // STmin = 0: no minimum separation time
+            bs,
+            stmin,
             PADDING_BYTE,
             PADDING_BYTE,
             PADDING_BYTE,
