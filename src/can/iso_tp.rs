@@ -181,13 +181,16 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
     }
 
     async fn transmit_sf(&self, id: Id, data: &[u8]) -> Result<(), IsoTpError> {
-        if data.len() > 7 {
+        let o = self.pci_offset();
+        let max_payload = 7 - o;
+        if data.len() > max_payload {
             return Err(IsoTpError::BufferOverflow);
         }
 
         let mut tx = [PADDING_BYTE; 8];
-        tx[0] = data.len() as u8;
-        tx[1..1 + data.len()].copy_from_slice(data);
+        if o == 1 { tx[0] = self.target_addr; }
+        tx[o] = data.len() as u8;
+        tx[o + 1..o + 1 + data.len()].copy_from_slice(data);
 
         let frame = D::Frame::new(id, &tx).ok_or(IsoTpError::DriverError)?;
 
@@ -208,10 +211,13 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         }
 
         // 5.2: build and transmit FF
+        let o = self.pci_offset();
+        let ff_payload = 6 - o; // 6 bytes normal, 5 bytes extended
         let mut ff = [PADDING_BYTE; 8];
-        ff[0] = (PciType::FirstFrame as u8) << 4 | ((len >> 8) as u8 & 0x0F);
-        ff[1] = (len & 0xFF) as u8;
-        ff[2..8].copy_from_slice(&data[..6]);
+        if o == 1 { ff[0] = self.target_addr; }
+        ff[o] = (PciType::FirstFrame as u8) << 4 | ((len >> 8) as u8 & 0x0F);
+        ff[o + 1] = (len & 0xFF) as u8;
+        ff[o + 2..o + 2 + ff_payload].copy_from_slice(&data[..ff_payload]);
         let frame = D::Frame::new(tx_id, &ff).ok_or(IsoTpError::DriverError)?;
         with_timeout(N_AS_TIMEOUT, self.driver.transmit(&frame))
             .await
@@ -224,15 +230,17 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         let mut st_min_dur = Self::st_min_duration(st_min);
 
         // 5.3: transmit CF sequence
+        let cf_payload = 7 - o; // 7 bytes normal, 6 bytes extended
         let mut sn: u8 = 1;
         let mut block_count: u8 = 0;
-        let mut offset: usize = 6; // bytes already sent in FF
+        let mut offset: usize = ff_payload; // bytes already sent in FF
 
         while offset < len {
             let mut cf = [PADDING_BYTE; 8];
-            cf[0] = (PciType::ConsecutiveFrame as u8) << 4 | (sn & 0x0F);
-            let chunk_end = (offset + 7).min(len);
-            cf[1..1 + (chunk_end - offset)].copy_from_slice(&data[offset..chunk_end]);
+            if o == 1 { cf[0] = self.target_addr; }
+            cf[o] = (PciType::ConsecutiveFrame as u8) << 4 | (sn & 0x0F);
+            let chunk_end = (offset + cf_payload).min(len);
+            cf[o + 1..o + 1 + (chunk_end - offset)].copy_from_slice(&data[offset..chunk_end]);
 
             let frame = D::Frame::new(tx_id, &cf).ok_or(IsoTpError::DriverError)?;
             with_timeout(N_AS_TIMEOUT, self.driver.transmit(&frame))
@@ -241,7 +249,7 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
                 .map_err(|_| IsoTpError::DriverError)?;
 
             sn = (sn + 1) % 16;
-            offset += 7;
+            offset += cf_payload;
             block_count += 1;
 
             if bs > 0 && block_count == bs {
@@ -516,16 +524,12 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         bs: u8,
         stmin: u8,
     ) -> Result<(), IsoTpError> {
-        let fc = [
-            (PciType::FlowControl as u8) << 4 | fs as u8,
-            bs,
-            stmin,
-            PADDING_BYTE,
-            PADDING_BYTE,
-            PADDING_BYTE,
-            PADDING_BYTE,
-            PADDING_BYTE,
-        ];
+        let o = self.pci_offset();
+        let mut fc = [PADDING_BYTE; 8];
+        if o == 1 { fc[0] = self.target_addr; }
+        fc[o] = (PciType::FlowControl as u8) << 4 | fs as u8;
+        fc[o + 1] = bs;
+        fc[o + 2] = stmin;
         let frame = D::Frame::new(target_id, &fc).ok_or(IsoTpError::DriverError)?;
         self.driver
             .transmit(&frame)
