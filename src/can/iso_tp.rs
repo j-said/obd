@@ -326,7 +326,8 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
             .extend_from_slice(&d[2..payload_end])
             .map_err(|_| IsoTpError::BufferOverflow)?;
         // 4.2.6: N_Cr timer starts after FC is sent; per-iteration timeout in receive_loop covers this
-        self.send_flow_control(fc_id, FlowStatus::ContinueToSend)
+        // 7.3: FC(CTS, bs=0, stmin=0) — no block limit, no separation time
+        self.send_flow_control(fc_id, FlowStatus::ContinueToSend, 0, 0)
             .await?;
         Ok(false)
     }
