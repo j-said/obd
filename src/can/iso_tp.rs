@@ -145,7 +145,9 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         }
     }
 
-    fn swap_ext_addr(&self, id: u32) -> u32 {
+    /// Swap TA/SA bytes in a UDS 29-bit extended ID (J1939 format 0x18DA_TA_SA).
+    /// Converts a request ID (0x18DA_TA_SA) to its response ID (0x18DA_SA_TA) and vice-versa.
+    fn swap_uds_ext_addr(&self, id: u32) -> u32 {
         (id & 0xFFFF0000) | ((id & 0xFF) << 8) | ((id >> 8) & 0xFF)
     }
 
@@ -157,7 +159,7 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         let resp_id = match target_id {
             Id::Standard(s) => Id::Standard(StandardId::new(s.as_raw() + 8).unwrap()),
             Id::Extended(e) => {
-                Id::Extended(ExtendedId::new(self.swap_ext_addr(e.as_raw())).unwrap())
+                Id::Extended(ExtendedId::new(self.swap_uds_ext_addr(e.as_raw())).unwrap())
             }
         };
         // 5.4: route to multi-frame TX when payload exceeds SF capacity
