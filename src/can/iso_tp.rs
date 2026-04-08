@@ -506,7 +506,8 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
                 }
                 Ok(false) => {}
                 Err(_) => {
-                    // Drop state for this ECU on any protocol error (SN mismatch, FC fail, etc.)
+                    // 11.3: on SN mismatch (WrongSn) or any other protocol error, drop this
+                    // ECU's state so it doesn't block collection of other ECUs.
                     states.retain(|st| st.id != id_raw);
                 }
             }
