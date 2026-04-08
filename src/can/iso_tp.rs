@@ -123,6 +123,13 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         }
     }
 
+    /// Derive the FC (Flow Control) sender ID from a received FF/SF frame's source ID.
+    ///
+    /// **OBD-II assumption (standard IDs):** ECU request IDs are 0x7E0–0x7E7 and response
+    /// IDs are request + 8 (0x7E8–0x7EF). We reverse by subtracting 8, which is correct
+    /// only for this OBD-II assignment. For other mappings, make this configurable.
+    ///
+    /// **UDS extended IDs:** swaps the TA/SA bytes — see `swap_uds_ext_addr`.
     fn get_fc_id(&self, target_id: Id) -> Result<Id, IsoTpError> {
         match target_id {
             Id::Standard(std) => {
@@ -133,7 +140,7 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
                 Ok(Id::Standard(StandardId::new(raw - 8).unwrap()))
             }
             Id::Extended(ext) => Ok(Id::Extended(
-                ExtendedId::new(self.swap_ext_addr(ext.as_raw())).unwrap(),
+                ExtendedId::new(self.swap_uds_ext_addr(ext.as_raw())).unwrap(),
             )),
         }
     }
