@@ -463,10 +463,17 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
     ) {
         loop {
             let frame = with_timeout(inter, self.driver.receive()).await;
-            let Ok(Ok(f)) = frame else {
-                break;
-            };
-            self.handle_collection_step(res, states, f, is_ext).await;
+            match frame {
+                Ok(Ok(f)) => self.handle_collection_step(res, states, f, is_ext).await,
+                // 11.4: on inter-frame timeout, only stop if no ECU is mid-transfer;
+                // otherwise keep listening so active transfers can complete.
+                _ => {
+                    let any_active = states.iter().any(|s| s.rx_dl > 0);
+                    if !any_active {
+                        break;
+                    }
+                }
+            }
         }
     }
 
