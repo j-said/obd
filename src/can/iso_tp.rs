@@ -19,9 +19,19 @@ const TIMEOUT_TOTAL: Duration = Duration::from_millis(500);
 
 #[derive(Debug)]
 pub enum IsoTpError {
-    Timeout,
+    /// N_As / N_Ar: TX or RX frame acknowledge timeout
+    TimeoutA,
+    /// N_Bs: no Flow Control received after First Frame was sent
+    TimeoutBs,
+    /// N_Cr: no Consecutive Frame received within the inter-frame window
+    TimeoutCr,
+    /// CF arrived with an unexpected sequence number
+    WrongSn,
+    /// FC carried a reserved FlowStatus value (3–F)
+    InvalidFs,
+    /// N_WFTmax consecutive FC.WAIT frames received
+    WftOverrun,
     BufferOverflow,
-    InvalidSequence,
     DriverError,
     InvalidId,
 }
@@ -142,7 +152,7 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         };
         with_timeout(TIMEOUT_SINGLE, self.receive_loop(&mut state, target_id))
             .await
-            .map_err(|_| IsoTpError::Timeout)?
+            .map_err(|_| IsoTpError::TimeoutCr)?
     }
 
     async fn receive_loop(
@@ -207,8 +217,11 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
     }
 
     fn handle_cf(&self, state: &mut TransferState, d: &[u8]) -> Result<bool, IsoTpError> {
-        if d.is_empty() || (d[0] & 0x0F) != state.next_sn {
+        if d.is_empty() {
             return Ok(false);
+        }
+        if (d[0] & 0x0F) != state.next_sn {
+            return Err(IsoTpError::WrongSn);
         }
         let to_copy = core::cmp::min(state.expected_len - state.buffer.len(), 7);
         state.buffer.extend_from_slice(&d[1..1 + to_copy]).map_err(|_| IsoTpError::BufferOverflow)?;
@@ -230,7 +243,7 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         )
         .await;
         if res.is_empty() {
-            Err(IsoTpError::Timeout)
+            Err(IsoTpError::TimeoutCr)
         } else {
             Ok(res)
         }

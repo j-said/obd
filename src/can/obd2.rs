@@ -82,7 +82,7 @@ impl<D: AsyncCanDriver> Obd2Service<D> {
             vin.extend_from_slice(&raw[3..]).ok();
             return Ok(vin);
         }
-        Err(IsoTpError::InvalidSequence)
+        Err(IsoTpError::DriverError)
     }
 }
 
