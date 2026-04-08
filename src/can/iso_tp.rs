@@ -483,11 +483,21 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         }
         let state = self.get_or_create_state(states, id_raw);
         if let Some(s) = state {
-            if self.process_frame(s, &f).await.unwrap_or(false) {
-                let data = core::mem::replace(&mut s.buffer, Vec::new());
-                s.rx_dl = 0;
-                s.next_sn = 1;
-                res.push(EcuResponse { id: id_raw, data }).ok();
+            // process_frame dispatches to handle_ff which sends FC(CTS) on FF receipt (11.1).
+            // Errors (including FC TX failure) abort this ECU's transfer silently to keep
+            // collecting from the remaining ECUs.
+            match self.process_frame(s, &f).await {
+                Ok(true) => {
+                    let data = core::mem::replace(&mut s.buffer, Vec::new());
+                    s.rx_dl = 0;
+                    s.next_sn = 1;
+                    res.push(EcuResponse { id: id_raw, data }).ok();
+                }
+                Ok(false) => {}
+                Err(_) => {
+                    // Drop state for this ECU on any protocol error (SN mismatch, FC fail, etc.)
+                    states.retain(|st| st.id != id_raw);
+                }
             }
         }
     }
