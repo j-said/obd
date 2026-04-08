@@ -301,10 +301,33 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
             next_sn: 1,
             buffer: Vec::new(),
         };
-        self.receive_loop(&mut state, target_id).await
+        // Phase 1: wait for first frame (SF or FF) — N_Cr timeout
+        let first = with_timeout(N_CR_TIMEOUT, self.receive_first_frame(&mut state, target_id))
+            .await
+            .map_err(|_| IsoTpError::TimeoutCr)??;
+        if first {
+            return Ok(core::mem::replace(&mut state.buffer, Vec::new()));
+        }
+        // Phase 2: FF received, FC sent — wait for each CF with per-CF N_Cr timeout
+        self.receive_cfs(&mut state, target_id).await
     }
 
-    async fn receive_loop(
+    /// Phase 1: wait for SF or FF; returns true on SF complete, false on FF received.
+    async fn receive_first_frame(
+        &self,
+        state: &mut TransferState,
+        target_id: Id,
+    ) -> Result<bool, IsoTpError> {
+        loop {
+            let frame = self.driver.receive().await.map_err(|_| IsoTpError::DriverError)?;
+            if frame.id() == target_id {
+                return self.process_frame(state, &frame).await;
+            }
+        }
+    }
+
+    /// Phase 2: collect CFs, restarting N_Cr timer on each frame.
+    async fn receive_cfs(
         &self,
         state: &mut TransferState,
         target_id: Id,
