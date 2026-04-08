@@ -237,12 +237,19 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
     }
 
     /// Convert FC STmin byte to a `Duration` (ISO 15765-2 §9.6.5.5).
+    ///
+    /// | Value      | Meaning                          |
+    /// |------------|----------------------------------|
+    /// | 0x00       | 0 ms                             |
+    /// | 0x01–0x7F  | 1–127 ms (1 ms resolution)       |
+    /// | 0xF1–0xF9  | 100–900 µs (100 µs resolution)   |
+    /// | 0x80–0xF0, 0xFA–0xFF | reserved → 127 ms (max) |
     fn st_min_duration(st_min: u8) -> Duration {
         match st_min {
             0x00 => Duration::from_millis(0),
             v @ 0x01..=0x7F => Duration::from_millis(v as u64),
             v @ 0xF1..=0xF9 => Duration::from_micros((v - 0xF0) as u64 * 100),
-            _ => Duration::from_millis(0), // reserved — treat as 0
+            _ => Duration::from_millis(127), // reserved — use maximum per spec
         }
     }
 
