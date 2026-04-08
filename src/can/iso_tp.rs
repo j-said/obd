@@ -479,11 +479,12 @@ impl<D: AsyncCanDriver> IsoTpHandler<D> {
         states.last_mut()
     }
 
-    fn is_valid_resp(&self, id: u32, is_ext: bool) -> bool {
-        if is_ext {
-            (id & 0xFFFF0000) == 0x18DA0000
-        } else {
-            (0x7E8..=0x7EF).contains(&id)
+    fn is_valid_resp(&self, id: u32, is_ext_frame: bool) -> bool {
+        match self.addressing {
+            // Normal addressing: standard frame IDs 0x7E8–0x7EF (OBD-II §10.3)
+            AddressingMode::Normal => !is_ext_frame && (0x7E8..=0x7EF).contains(&id),
+            // Extended addressing: 29-bit J1939/UDS physical response IDs 0x18DA_XX_XX
+            AddressingMode::Extended => is_ext_frame && (id & 0xFFFF0000) == 0x18DA0000,
         }
     }
 
