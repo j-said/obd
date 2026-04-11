@@ -20,7 +20,8 @@ pub const MTU_SIZE: usize = trouble_host::config::DEFAULT_PACKET_POOL_MTU;
 pub type ObdController = ExternalController<BleConnector<'static>, 10>;
 
 pub type MyPacketPool = DefaultPacketPool;
-pub type BleResources = HostResources<MyPacketPool, 1, 1, 1>; // 1 з'єднання, 1 канал, 1 реклама
+// GATT does not use L2CAP CoC channels → CHANNELS = 0
+pub type BleResources = HostResources<MyPacketPool, 1, 0, 1>;
 
 pub type ObdStack = Stack<'static, ObdController, MyPacketPool>;
 pub type ObdHost = Host<'static, ObdController, MyPacketPool>;
@@ -30,6 +31,13 @@ pub type ObdRunner = Runner<'static, ObdController, MyPacketPool>;
 pub type BlePacket = Vec<u8, MTU_SIZE>;
 pub type BleChannel = Channel<CriticalSectionRawMutex, BlePacket, 10>;
 
+// NUS Service UUID: 6E400001-B5B3-F393-E0A9-E50E24DCCA9E (little-endian bytes)
+// [u8; 16] to match AdStructure::ServiceUuids128(&[[u8; 16]])
+pub const NUS_SERVICE_UUID: [u8; 16] = [
+    0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0,
+    0x93, 0xF3, 0xB3, 0xB5, 0x01, 0x00, 0x40, 0x6E,
+];
+
 // ==========================================
 // ERRORS
 // ==========================================
@@ -38,7 +46,7 @@ pub type BleChannel = Channel<CriticalSectionRawMutex, BlePacket, 10>;
 pub enum BleError {
     AdvertisingError,
     ConnectionFailed,
-    L2capError,
+    GattError,
     MtuExceeded,
     ChannelClosed,
     Timeout,
@@ -64,7 +72,7 @@ impl fmt::Display for BleError {
         match self {
             BleError::AdvertisingError => write!(f, "Advertising failed"),
             BleError::ConnectionFailed => write!(f, "Connection failed"),
-            BleError::L2capError => write!(f, "L2CAP error"),
+            BleError::GattError => write!(f, "GATT error"),
             BleError::MtuExceeded => write!(f, "MTU exceeded"),
             BleError::ChannelClosed => write!(f, "Channel closed"),
             BleError::Timeout => write!(f, "Timeout"),

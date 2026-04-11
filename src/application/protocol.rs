@@ -26,6 +26,16 @@ pub enum DebugMsg {
     LiveDataFailed,
     InvalidFormat,
     GetStoredDtcsFailed,
+    // ISO-TP transport layer errors
+    IsoTpTimeoutA,       // N_As/N_Ar: frame acknowledge timeout
+    IsoTpTimeoutBs,      // N_Bs: no Flow Control after First Frame
+    IsoTpTimeoutCr,      // N_Cr: no Consecutive Frame in inter-frame window
+    IsoTpWrongSn,        // Consecutive Frame with unexpected sequence number
+    IsoTpInvalidFs,      // Flow Control with reserved FlowStatus value
+    IsoTpWftOverrun,     // N_WFTmax FC.WAIT frames exceeded
+    IsoTpBufferOverflow,
+    IsoTpDriverError,
+    IsoTpInvalidId,
 }
 
 #[derive(Deserialize, Debug)]
