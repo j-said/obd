@@ -1,6 +1,6 @@
+pub mod dtc;
 pub mod iso_tp;
 pub mod obd2;
-pub mod dtc;
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
@@ -15,14 +15,13 @@ pub use obd2::Obd2Service;
 #[allow(async_fn_in_trait)]
 pub trait AsyncCanDriver {
     type Frame: Frame;
-    // Note: Будь-який тип, що реалізує embedded_can::Frame
     type Error: core::fmt::Debug;
 
     async fn transmit(&self, frame: &Self::Frame) -> Result<(), Self::Error>;
     async fn receive(&self) -> Result<Self::Frame, Self::Error>;
 }
 
-/// --- Реалізація для ESP32 ---
+// ========= ESP32 =========
 
 pub type SharedTwaiRx<'a> = Mutex<CriticalSectionRawMutex, TwaiRx<'a, Async>>;
 pub type SharedTwaiTx<'a> = Mutex<CriticalSectionRawMutex, TwaiTx<'a, Async>>;
