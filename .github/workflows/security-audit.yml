@@ -1,0 +1,71 @@
+name: Security Audit
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  schedule:
+    # Run every Monday at 06:00 UTC
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    name: Cargo Security Audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run security audit
+        id: cargo-audit
+        run: cargo audit
+        continue-on-error: true
+
+      - name: Open issue on audit failure
+        if: steps.cargo-audit.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: existing } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              state: 'open',
+              labels: 'security',
+            });
+
+            const alreadyOpen = existing.some(i => i.title.includes('Security Audit Failed'));
+            if (!alreadyOpen) {
+              await github.rest.issues.create({
+                owner:  context.repo.owner,
+                repo:   context.repo.repo,
+                title:  '🔐 Security Audit Failed',
+                body: [
+                  '## Security Audit Failure',
+                  '',
+                  'The scheduled **cargo audit** detected vulnerable dependencies.',
+                  '',
+                  `**Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`,
+                  '',
+                  'Please review the audit output and update the affected crates.',
+                ].join('\n'),
+                labels: ['security', 'automated'],
+              });
+            }
+
+      - name: Fail workflow if audit found vulnerabilities
+        if: steps.cargo-audit.outcome == 'failure'
+        run: exit 1

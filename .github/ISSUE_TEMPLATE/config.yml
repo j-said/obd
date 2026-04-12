@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Discussions
+    url: https://github.com/wroom-code-base/firmware/discussions
+    about: Ask questions and discuss ideas in GitHub Discussions.
+  - name: 📖 esp-rs Community
+    url: https://github.com/esp-rs
+    about: Resources and support for ESP Rust development.

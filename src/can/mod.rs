@@ -1,4 +1,4 @@
-pub mod dtc;
+// pub mod dtc;
 pub mod iso_tp;
 pub mod obd2;
 
