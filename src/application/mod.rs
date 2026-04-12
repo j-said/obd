@@ -1,145 +1,56 @@
 pub mod protocol;
 
-use crate::can::{AsyncCanDriver, Obd2Service, iso_tp::IsoTpError, obd2::ECU_ENGINE_TX_ID};
-use defmt::{info, warn};
+use crate::can::{AsyncCanDriver, Obd2Service, iso_tp::IsoTpError};
+use defmt::info;
+use embedded_can::{Frame, Id};
 use embedded_io_async::{Read, Write};
-use protocol::{Command, DebugMsg, Request, Response, Status};
+use heapless::Vec;
+use protocol::{DebugMsg, Response, Status};
 
 pub async fn handle_client<S, D>(mut stream: S, obd_service: &Obd2Service<D>)
 where
     S: Read + Write,
     D: AsyncCanDriver,
 {
-    let mut in_buf = [0u8; 1024];
     let mut out_buf = [0u8; 1024];
+    let mut id: u32 = 0;
 
-    info!("Client handler task started");
+    info!("Started loop");
 
     loop {
-        let Ok(n) = stream.read(&mut in_buf).await else {
-            warn!("Stream read error");
-            break;
-        };
-        if n == 0 {
-            info!("Stream closed by client");
-            break;
-        }
-
-        if let Ok(raw_str) = core::str::from_utf8(&in_buf[..n]) {
-            info!("RX ({} bytes): {}", n, raw_str);
-        } else {
-            warn!("RX ({} bytes): Decoding failed", n);
-        }
-
-        if let Ok((req, _)) = serde_json_core::from_slice::<Request>(&in_buf[..n]) {
-            let id = req.id;
-            info!("Parsed request ID: {}", id);
-
-            let ser_result = match req.cmd {
-                Command::GetVin => match obd_service.get_vin(ECU_ENGINE_TX_ID).await {
-                    Ok(vin) => serde_json_core::to_slice(
-                        &Response {
-                            id,
-                            status: Status::Ok,
-                            data: Some(&*vin),
-                            debug: None,
-                        },
-                        &mut out_buf,
-                    ),
-                    Err(e) => serde_json_core::to_slice(
-                        &Response::<()> {
-                            id,
-                            status: Status::Error,
-                            data: None,
-                            debug: Some(iso_tp_to_debug(e)),
-                        },
-                        &mut out_buf,
-                    ),
-                },
-                Command::GetLiveData { pid } => match obd_service.get_broadcast_livedata(pid).await
-                {
-                    Ok(data) => serde_json_core::to_slice(
-                        &Response {
-                            id,
-                            status: Status::Ok,
-                            data: Some(&data),
-                            debug: None,
-                        },
-                        &mut out_buf,
-                    ),
-                    Err(e) => serde_json_core::to_slice(
-                        &Response::<()> {
-                            id,
-                            status: Status::Error,
-                            data: None,
-                            debug: Some(iso_tp_to_debug(e)),
-                        },
-                        &mut out_buf,
-                    ),
-                },
-                Command::ClearDtcs => match obd_service.clear_dtcs().await {
-                    Ok(()) => serde_json_core::to_slice(
-                        &Response::<()> {
-                            id,
-                            status: Status::Ok,
-                            data: None,
-                            debug: None,
-                        },
-                        &mut out_buf,
-                    ),
-                    Err(e) => serde_json_core::to_slice(
-                        &Response::<()> {
-                            id,
-                            status: Status::Error,
-                            data: None,
-                            debug: Some(iso_tp_to_debug(e)),
-                        },
-                        &mut out_buf,
-                    ),
-                },
-                Command::GetStoredDtcs => match obd_service.get_stored_dtcs().await {
-                    Ok(data) => serde_json_core::to_slice(
-                        &Response {
-                            id,
-                            status: Status::Ok,
-                            data: Some(&data),
-                            debug: None,
-                        },
-                        &mut out_buf,
-                    ),
-                    Err(e) => serde_json_core::to_slice(
-                        &Response::<()> {
-                            id,
-                            status: Status::Error,
-                            data: None,
-                            debug: Some(iso_tp_to_debug(e)),
-                        },
-                        &mut out_buf,
-                    ),
-                },
-            };
-
-            if let Ok(len) = ser_result {
-                if let Ok(raw_str) = core::str::from_utf8(&out_buf[..len]) {
-                    info!("TX ({} bytes): {}", len, raw_str);
-                } else {
-                    warn!("TX ({} bytes): Decoding failed", len);
-                }
-                let _ = stream.write_all(&out_buf[..len]).await;
+        let ser_result = match obd_service.debug_sniffer().await {
+            Ok(frame) => {
+                let can_id = match frame.id() {
+                    Id::Standard(sid) => sid.as_raw() as u32,
+                    Id::Extended(eid) => eid.as_raw(),
+                };
+                let mut raw: Vec<u8, 13> = Vec::new();
+                raw.extend_from_slice(&can_id.to_le_bytes()).ok();
+                raw.push(frame.dlc() as u8).ok();
+                raw.extend_from_slice(frame.data()).ok();
+                serde_json_core::to_slice(
+                    &Response {
+                        id,
+                        status: Status::Ok,
+                        data: Some(raw),
+                        debug: None,
+                    },
+                    &mut out_buf,
+                )
             }
-        } else {
-            if let Ok(len) = serde_json_core::to_slice(
-                &Response::<()> {
-                    id: 0,
+            Err(e) => serde_json_core::to_slice(
+                &Response::<Vec<u8, 13>> {
+                    id,
                     status: Status::Error,
                     data: None,
-                    debug: Some(DebugMsg::InvalidFormat),
+                    debug: Some(iso_tp_to_debug(e)),
                 },
                 &mut out_buf,
-            ) {
-                info!("TX ({} bytes): {}", len, "Invalid request format");
-                let _ = stream.write_all(&out_buf[..len]).await;
-            }
+            ),
+        };
+        id += 1;
+        if let Ok(len) = ser_result {
+            let _ = stream.write_all(&out_buf[..len]).await;
         }
     }
 }

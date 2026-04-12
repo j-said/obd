@@ -68,7 +68,7 @@ async fn main(spawner: Spawner) {
         peripherals.GPIO4,
         peripherals.GPIO5,
         BaudRate::B500K,
-        TwaiMode::Normal,
+        TwaiMode::ListenOnly,
     )
     .into_async()
     .start()

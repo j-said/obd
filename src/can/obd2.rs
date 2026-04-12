@@ -20,7 +20,10 @@ impl<D: AsyncCanDriver> Obd2Service<D> {
 
     /// Switch to Extended (29-bit) addressing mode at runtime.
     pub fn to_extended_adr(&self, target_addr: u8) {
-        info!("enter: Obd2Service::to_extended_adr target_addr=0x{:02X}", target_addr);
+        info!(
+            "enter: Obd2Service::to_extended_adr target_addr=0x{:02X}",
+            target_addr
+        );
         self.tp.to_extended_adr(target_addr);
         info!("return: Obd2Service::to_extended_adr");
     }
@@ -48,8 +51,15 @@ impl<D: AsyncCanDriver> Obd2Service<D> {
         }
     }
 
+    pub async fn debug_sniffer(&self) -> Result<<D as AsyncCanDriver>::Frame, IsoTpError> {
+        self.tp.debug_listen_every_frame().await
+    }
+
     pub async fn get_broadcast_livedata(&self, pid: u8) -> Result<Vec<EcuResponse, 8>, IsoTpError> {
-        info!("enter: Obd2Service::get_broadcast_livedata pid=0x{:02X}", pid);
+        info!(
+            "enter: Obd2Service::get_broadcast_livedata pid=0x{:02X}",
+            pid
+        );
         let result = self
             .tp
             .send_functional_request(

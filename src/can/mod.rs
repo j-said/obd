@@ -47,6 +47,14 @@ impl<'a> AsyncCanDriver for EspCanManager<'a> {
 
     async fn receive(&self) -> Result<EspTwaiFrame, esp_hal::twai::EspTwaiError> {
         let mut rx = self.rx.lock().await;
-        rx.receive_async().await
+        let frame = rx.receive_async().await?;
+
+        use defmt::{info};
+
+        use esp_backtrace as _;
+        use esp_println as _;
+
+        info!("[CAN FRAME] Received CAN frame: {:?}", frame);
+        Ok(frame)
     }
 }

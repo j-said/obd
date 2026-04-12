@@ -1,8 +1,8 @@
 use super::AsyncCanDriver;
 use defmt::{error, info};
 
-use esp_println as _;
 use esp_backtrace as _;
+use esp_println as _;
 
 use core::sync::atomic::{AtomicU8, Ordering};
 use embassy_time::{Duration, Instant, Timer, with_timeout};
@@ -39,7 +39,7 @@ enum FlowStatus {
 impl FlowStatus {
     /// Parse from the full FC PCI byte (lower nibble = FS).
     fn from_pci_byte(b: u8) -> Result<Self, IsoTpError> {
-        info!("enter: FlowStatus::from_pci_byte");
+        info!("[ENTER]: FlowStatus::from_pci_byte");
         match b & 0x0F {
             0 => Ok(Self::ContinueToSend),
             1 => Ok(Self::Wait),
@@ -87,7 +87,7 @@ pub enum IsoTpError {
 // TODO: make buffer capacity a const generic on IsoTpHandler<D, const N: usize>
 //       so callers can trade memory for max PDU size (ISO-TP allows up to 4095 bytes).
 fn serialize_can_id<S: serde::Serializer>(id: &Id, ser: S) -> Result<S::Ok, S::Error> {
-    info!("enter: serialize_can_id");
+    info!("[ENTER]: serialize_can_id");
     match id {
         Id::Standard(s) => ser.serialize_u32(s.as_raw() as u32),
         Id::Extended(e) => ser.serialize_u32(e.as_raw()),
@@ -113,7 +113,7 @@ struct TransferState {
 
 impl TransferState {
     fn new(id: Id) -> Self {
-        info!("enter: TransferState::new");
+        info!("[ENTER]: TransferState::new");
         Self {
             id,
             rx_dl: 0,
@@ -126,7 +126,7 @@ impl TransferState {
     /// Apply a Single Frame payload (d starts at the PCI byte).
     /// Returns true when the message is complete.
     fn apply_single_frame(&mut self, data: &[u8]) -> Result<bool, IsoTpError> {
-        info!("enter: TransferState::apply_single_frame");
+        info!("[ENTER]: TransferState::apply_single_frame");
         let len = (data[0] & 0x0F) as usize;
         if len == 0 || len > 7 || data.len() < 1 + len {
             return Ok(false);
@@ -140,7 +140,7 @@ impl TransferState {
     /// Apply a First Frame payload (d starts at the PCI byte, after FF validation).
     /// Caller is responsible for sending FC(CTS) after this returns Ok.
     fn apply_first_frame(&mut self, data: &[u8], ff_dl: usize) -> Result<(), IsoTpError> {
-        info!("enter: TransferState::apply_first_frame");
+        info!("[ENTER]: TransferState::apply_first_frame");
         self.rx_dl = ff_dl;
         self.next_sn = 1;
         self.buffer.clear();
@@ -153,7 +153,7 @@ impl TransferState {
     /// Apply a Consecutive Frame payload (d starts at the PCI byte).
     /// Returns true when all expected bytes have been received.
     fn apply_consecutive_frame(&mut self, data: &[u8]) -> Result<bool, IsoTpError> {
-        info!("enter: TransferState::apply_consecutive_frame");
+        info!("[ENTER]: TransferState::apply_consecutive_frame");
         if data.len() < 2 {
             return Ok(false);
         }
@@ -180,7 +180,7 @@ enum PciType {
 impl PciType {
     /// Parse from the full PCI byte (upper nibble = type).
     fn from_pci_byte(b: u8) -> Option<Self> {
-        info!("enter: PciType::from_pci_byte");
+        info!("[ENTER]: PciType::from_pci_byte");
         match b >> 4 {
             0 => Some(Self::SingleFrame),
             1 => Some(Self::FirstFrame),
@@ -217,7 +217,7 @@ pub struct IsoTpHandler<D, M: IdMapper = Obd2IdMapper> {
 
 impl<D: AsyncCanDriver> IsoTpHandler<D, Obd2IdMapper> {
     pub fn new(driver: D) -> Self {
-        info!("enter: IsoTpHandler::new");
+        info!("[ENTER]: IsoTpHandler::new");
         Self {
             driver,
             addressing: AtomicU8::new(AddressingMode::Normal as u8),
@@ -226,15 +226,19 @@ impl<D: AsyncCanDriver> IsoTpHandler<D, Obd2IdMapper> {
         }
     }
     /// Construct in Extended addressing mode with the given target address byte.
-    pub fn with_target_addr(driver: D, target_addr: u8) -> () {
-        info!("enter: IsoTpHandler::with_target_addr");
+    pub fn with_target_addr(&self, target_addr: u8) -> () {
+        info!("[ENTER]: IsoTpHandler::with_target_addr");
         self.target_addr.store(target_addr, Ordering::Relaxed);
     }
 
     /// Switch to Extended addressing mode at runtime.
     pub fn to_extended_adr(&self, target_addr: u8) {
-        info!("enter: IsoTpHandler::to_extended_adr target_addr=0x{:02X}", target_addr);
-        self.addressing.store(AddressingMode::Extended as u8, Ordering::Relaxed);
+        info!(
+            "[ENTER]: IsoTpHandler::to_extended_adr target_addr=0x{:02X}",
+            target_addr
+        );
+        self.addressing
+            .store(AddressingMode::Extended as u8, Ordering::Relaxed);
         self.target_addr.store(target_addr, Ordering::Relaxed);
         self.mapper.to_extended_adr();
         info!("return: IsoTpHandler::to_extended_adr");
@@ -242,8 +246,9 @@ impl<D: AsyncCanDriver> IsoTpHandler<D, Obd2IdMapper> {
 
     /// Switch to Normal (11-bit) addressing mode at runtime.
     pub fn to_normal_addr(&self) {
-        info!("enter: IsoTpHandler::to_normal_addr");
-        self.addressing.store(AddressingMode::Normal as u8, Ordering::Relaxed);
+        info!("[ENTER]: IsoTpHandler::to_normal_addr");
+        self.addressing
+            .store(AddressingMode::Normal as u8, Ordering::Relaxed);
         self.mapper.to_normal_addr();
         info!("return: IsoTpHandler::to_normal_addr");
     }
@@ -251,7 +256,7 @@ impl<D: AsyncCanDriver> IsoTpHandler<D, Obd2IdMapper> {
 
 impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
     pub fn with_mapper(driver: D, addressing: AddressingMode, target_addr: u8, mapper: M) -> Self {
-        info!("enter: IsoTpHandler::with_mapper");
+        info!("[ENTER]: IsoTpHandler::with_mapper");
         Self {
             driver,
             addressing: AtomicU8::new(addressing as u8),
@@ -271,7 +276,7 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
 
     /// Byte offset at which the PCI byte starts (0 for Normal, 1 for Extended).
     fn pci_byte_offset(&self) -> usize {
-        info!("enter: IsoTpHandler::pci_byte_offset");
+        info!("[ENTER]: IsoTpHandler::pci_byte_offset");
         match self.addressing_mode() {
             AddressingMode::Normal => 0,
             AddressingMode::Extended => 1,
@@ -283,7 +288,7 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
         target_id: Id,
         data: &[u8],
     ) -> Result<Vec<u8, 256>, IsoTpError> {
-        info!("enter: IsoTpHandler::send_physical_request");
+        info!("[ENTER]: IsoTpHandler::send_physical_request");
         // Derive the expected response ID (mapper reverses the OBD-II/UDS offset convention)
         let resp_id = self.mapper.response_id_for_request(target_id)?;
         let max_sf = 7 - self.pci_byte_offset();
@@ -305,7 +310,7 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
         target_id: Id,
         data: &[u8],
     ) -> Result<Vec<EcuResponse, 8>, IsoTpError> {
-        info!("enter: IsoTpHandler::send_functional_request");
+        info!("[ENTER]: IsoTpHandler::send_functional_request");
         // functional addressing only supports SF
         let max_sf = 7 - self.pci_byte_offset();
         if data.len() > max_sf {
@@ -324,7 +329,7 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
     }
 
     async fn send_single_frame(&self, id: Id, data: &[u8]) -> Result<(), IsoTpError> {
-        info!("enter: IsoTpHandler::send_single_frame");
+        info!("[ENTER]: IsoTpHandler::send_single_frame");
         let o = self.pci_byte_offset();
         let max_payload = 7 - o;
         if data.len() > max_payload {
@@ -356,7 +361,7 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
     /// `tx_id`  — CAN ID we send on.
     /// `fc_id`  — CAN ID we expect FC frames from (usually `resp_id`).
     async fn send_multi_frame(&self, tx_id: Id, fc_id: Id, data: &[u8]) -> Result<(), IsoTpError> {
-        info!("enter: IsoTpHandler::send_multi_frame");
+        info!("[ENTER]: IsoTpHandler::send_multi_frame");
         let len = data.len();
         // FF_DL is 12-bit, max 4095
         if len > 0xFFF {
@@ -439,7 +444,7 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
     /// | 0xF1–0xF9  | 100–900 µs (100 µs resolution)    |
     /// | 0x80–0xF0, 0xFA–0xFF | reserved → 127 ms (max) |
     fn decode_stmin(st_min: u8) -> Duration {
-        info!("enter: IsoTpHandler::decode_stmin");
+        info!("[ENTER]: IsoTpHandler::decode_stmin");
         match st_min {
             0x00 => Duration::from_millis(0),
             v @ 0x01..=0x7F => Duration::from_millis(v as u64),
@@ -449,7 +454,7 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
     }
 
     async fn receive_response(&self, target_id: Id) -> Result<Vec<u8, 256>, IsoTpError> {
-        info!("enter: IsoTpHandler::receive_response");
+        info!("[ENTER]: IsoTpHandler::receive_response");
         let mut state = TransferState::new(target_id);
         // Phase 1: wait for first frame (SF or FF) — N_Cr timeout
         let complete = self.await_initial_frame(&mut state, target_id).await?;
@@ -473,7 +478,7 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
         state: &mut TransferState,
         target_id: Id,
     ) -> Result<bool, IsoTpError> {
-        info!("enter: IsoTpHandler::await_initial_frame");
+        info!("[ENTER]: IsoTpHandler::await_initial_frame");
         let deadline = Instant::now() + N_CR_TIMEOUT;
         loop {
             let now = Instant::now();
@@ -488,7 +493,10 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
             if frame.id() == target_id {
                 let result = self.dispatch_frame(state, &frame).await;
                 match &result {
-                    Ok(complete) => info!("return ok: IsoTpHandler::await_initial_frame complete={}", complete),
+                    Ok(complete) => info!(
+                        "return ok: IsoTpHandler::await_initial_frame complete={}",
+                        complete
+                    ),
                     Err(e) => error!("return err: IsoTpHandler::await_initial_frame {:?}", e),
                 }
                 return result;
@@ -503,7 +511,7 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
         state: &mut TransferState,
         target_id: Id,
     ) -> Result<Vec<u8, 256>, IsoTpError> {
-        info!("enter: IsoTpHandler::receive_consecutive_frames");
+        info!("[ENTER]: IsoTpHandler::receive_consecutive_frames");
         let mut deadline = Instant::now() + N_CR_TIMEOUT;
         loop {
             let now = Instant::now();
@@ -531,7 +539,7 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
         state: &mut TransferState,
         frame: &D::Frame,
     ) -> Result<bool, IsoTpError> {
-        info!("enter: IsoTpHandler::dispatch_frame");
+        info!("[ENTER]: IsoTpHandler::dispatch_frame");
         let d = frame.data();
         let o = self.pci_byte_offset();
         if d.len() <= o {
@@ -551,7 +559,7 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
         id: Id,
         d: &[u8],
     ) -> Result<bool, IsoTpError> {
-        info!("enter: IsoTpHandler::process_first_frame");
+        info!("[ENTER]: IsoTpHandler::process_first_frame");
         if d.len() < 3 {
             return Ok(false);
         }
@@ -580,7 +588,7 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
         state: &mut TransferState,
         d: &[u8],
     ) -> Result<bool, IsoTpError> {
-        info!("enter: IsoTpHandler::process_single_frame");
+        info!("[ENTER]: IsoTpHandler::process_single_frame");
         state.apply_single_frame(d)
     }
 
@@ -589,7 +597,7 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
         state: &mut TransferState,
         d: &[u8],
     ) -> Result<bool, IsoTpError> {
-        info!("enter: IsoTpHandler::process_consecutive_frame");
+        info!("[ENTER]: IsoTpHandler::process_consecutive_frame");
         state.apply_consecutive_frame(d)
     }
 
@@ -598,7 +606,7 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
         inter: Duration,
         total: Duration,
     ) -> Result<Vec<EcuResponse, 8>, IsoTpError> {
-        info!("enter: IsoTpHandler::receive_functional_responses");
+        info!("[ENTER]: IsoTpHandler::receive_functional_responses");
         let mut res: Vec<EcuResponse, 8> = Vec::new();
         let mut states: Vec<TransferState, 8> = Vec::new();
         let _ = with_timeout(
@@ -607,10 +615,15 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
         )
         .await;
         if res.is_empty() {
-            error!("return err: IsoTpHandler::receive_functional_responses TimeoutCr (no responses)");
+            error!(
+                "return err: IsoTpHandler::receive_functional_responses TimeoutCr (no responses)"
+            );
             Err(IsoTpError::TimeoutCr)
         } else {
-            info!("return ok: IsoTpHandler::receive_functional_responses count={}", res.len());
+            info!(
+                "return ok: IsoTpHandler::receive_functional_responses count={}",
+                res.len()
+            );
             Ok(res)
         }
     }
@@ -621,7 +634,7 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
         states: &mut Vec<TransferState, 8>,
         inter: Duration,
     ) {
-        info!("enter: IsoTpHandler::run_collection_loop");
+        info!("[ENTER]: IsoTpHandler::run_collection_loop");
         loop {
             let frame = with_timeout(inter, self.driver.receive()).await;
             match frame {
@@ -642,7 +655,7 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
         states: &mut Vec<TransferState, 8>,
         f: D::Frame,
     ) {
-        info!("enter: IsoTpHandler::process_collection_frame");
+        info!("[ENTER]: IsoTpHandler::process_collection_frame");
         let frame_id = f.id();
         if !self.mapper.is_valid_response_id(frame_id) {
             return;
@@ -674,7 +687,7 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
         states: &'a mut Vec<TransferState, 8>,
         id: Id,
     ) -> Option<&'a mut TransferState> {
-        info!("enter: IsoTpHandler::find_or_insert_ecu_state");
+        info!("[ENTER]: IsoTpHandler::find_or_insert_ecu_state");
         if let Some(idx) = states.iter().position(|s| s.id == id) {
             return Some(&mut states[idx]);
         }
@@ -691,7 +704,7 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
         fc_id: Id,
         wft_count: &mut u8,
     ) -> Result<(u8, u8), IsoTpError> {
-        info!("enter: IsoTpHandler::await_flow_control");
+        info!("[ENTER]: IsoTpHandler::await_flow_control");
         let mut deadline = Instant::now() + N_BS_TIMEOUT;
         loop {
             let now = Instant::now();
@@ -713,7 +726,11 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
             }
             match FlowStatus::from_pci_byte(d[o])? {
                 FlowStatus::ContinueToSend => {
-                    info!("return ok: IsoTpHandler::await_flow_control CTS bs={} stmin={}", d[o + 1], d[o + 2]);
+                    info!(
+                        "return ok: IsoTpHandler::await_flow_control CTS bs={} stmin={}",
+                        d[o + 1],
+                        d[o + 2]
+                    );
                     return Ok((d[o + 1], d[o + 2]));
                 }
                 FlowStatus::Wait => {
@@ -739,7 +756,7 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
         bs: u8,
         stmin: u8,
     ) -> Result<(), IsoTpError> {
-        info!("enter: IsoTpHandler::transmit_flow_control");
+        info!("[ENTER]: IsoTpHandler::transmit_flow_control");
         let o = self.pci_byte_offset();
         let mut fc = [PADDING_BYTE; 8];
         if o == 1 {
@@ -759,6 +776,17 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
         }
         result
     }
+
+    pub(crate) async fn debug_listen_every_frame(&self) -> Result<<D as AsyncCanDriver>::Frame, IsoTpError> {
+        info!("[ENTER]: IsoTpHandler::debug_listen_everything");
+
+        let frame = self
+            .driver
+            .receive()
+            .await
+            .map_err(|_| IsoTpError::DriverError);
+        return frame
+    }
 }
 
 // ==========================================
@@ -776,21 +804,25 @@ pub struct Obd2IdMapper {
 
 impl Obd2IdMapper {
     pub fn new(addressing: AddressingMode) -> Self {
-        info!("enter: Obd2IdMapper::new");
-        Self { addressing: AtomicU8::new(addressing as u8) }
+        info!("[ENTER]: Obd2IdMapper::new");
+        Self {
+            addressing: AtomicU8::new(addressing as u8),
+        }
     }
 
     /// Switch to Extended (29-bit) addressing mode at runtime.
     pub fn to_extended_adr(&self) {
-        info!("enter: Obd2IdMapper::to_extended_adr");
-        self.addressing.store(AddressingMode::Extended as u8, Ordering::Relaxed);
+        info!("[ENTER]: Obd2IdMapper::to_extended_adr");
+        self.addressing
+            .store(AddressingMode::Extended as u8, Ordering::Relaxed);
         info!("return: Obd2IdMapper::to_extended_adr");
     }
 
     /// Switch to Normal (11-bit) addressing mode at runtime.
     pub fn to_normal_addr(&self) {
-        info!("enter: Obd2IdMapper::to_normal_addr");
-        self.addressing.store(AddressingMode::Normal as u8, Ordering::Relaxed);
+        info!("[ENTER]: Obd2IdMapper::to_normal_addr");
+        self.addressing
+            .store(AddressingMode::Normal as u8, Ordering::Relaxed);
         info!("return: Obd2IdMapper::to_normal_addr");
     }
 
@@ -800,14 +832,14 @@ impl Obd2IdMapper {
 
     /// Swap SA/TA bytes in a UDS 29-bit extended ID (J1939 format 0x18DA_TA_SA).
     fn swap_uds_sa_ta(id: u32) -> u32 {
-        info!("enter: Obd2IdMapper::swap_uds_sa_ta");
+        info!("[ENTER]: Obd2IdMapper::swap_uds_sa_ta");
         (id & 0xFFFF0000) | ((id & 0xFF) << 8) | ((id >> 8) & 0xFF)
     }
 }
 
 impl IdMapper for Obd2IdMapper {
     fn response_id_for_request(&self, request_id: Id) -> Result<Id, IsoTpError> {
-        info!("enter: Obd2IdMapper::response_id_for_request");
+        info!("[ENTER]: Obd2IdMapper::response_id_for_request");
         let result = match request_id {
             Id::Standard(s) => Ok(Id::Standard(StandardId::new(s.as_raw() + 8).unwrap())),
             Id::Extended(e) => Ok(Id::Extended(
@@ -822,7 +854,7 @@ impl IdMapper for Obd2IdMapper {
     }
 
     fn derive_fc_sender_id(&self, response_id: Id) -> Result<Id, IsoTpError> {
-        info!("enter: Obd2IdMapper::derive_fc_sender_id");
+        info!("[ENTER]: Obd2IdMapper::derive_fc_sender_id");
         let result = match response_id {
             Id::Standard(std) => {
                 let raw = std.as_raw();
@@ -843,7 +875,7 @@ impl IdMapper for Obd2IdMapper {
     }
 
     fn is_valid_response_id(&self, id: Id) -> bool {
-        info!("enter: Obd2IdMapper::is_valid_response_id");
+        info!("[ENTER]: Obd2IdMapper::is_valid_response_id");
         match (self.addressing_mode(), id) {
             (AddressingMode::Normal, Id::Standard(s)) => (0x7E8..=0x7EF).contains(&s.as_raw()),
             (AddressingMode::Extended, Id::Extended(e)) => (e.as_raw() & 0xFFFF0000) == 0x18DA0000,
