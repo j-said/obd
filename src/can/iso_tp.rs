@@ -279,9 +279,9 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
 
         let frame = D::Frame::new(id, &tx).ok_or(IsoTpError::DriverError)?;
 
-        self.driver
-            .transmit(&frame)
+        with_timeout(N_AS_TIMEOUT, self.driver.transmit(&frame))
             .await
+            .map_err(|_| IsoTpError::TimeoutA)?
             .map_err(|_| IsoTpError::DriverError)
     }
 
@@ -638,9 +638,9 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
         fc[o + 1] = bs;
         fc[o + 2] = stmin;
         let frame = D::Frame::new(target_id, &fc).ok_or(IsoTpError::DriverError)?;
-        self.driver
-            .transmit(&frame)
+        with_timeout(N_AS_TIMEOUT, self.driver.transmit(&frame))
             .await
+            .map_err(|_| IsoTpError::TimeoutA)?
             .map_err(|_| IsoTpError::DriverError)
     }
 }

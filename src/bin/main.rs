@@ -108,7 +108,7 @@ async fn main(spawner: Spawner) {
 
     // -- End
 
-    info!("All tasks spawned. Entering pending state.");
+    info!("\n\nAll tasks spawned. Entering pending state.\n\n");
     pending::<()>().await;
     unreachable!();
 }
