@@ -79,7 +79,7 @@ async fn main(spawner: Spawner) {
 
     let can_manager = EspCanManager::new(tx_shared, rx_shared);
     let iso_tp = IsoTpHandler::new(can_manager);
-    let obd2 = OBD_SERVICE.init(Obd2Service::new(iso_tp, false));
+    let obd2 = OBD_SERVICE.init(Obd2Service::new(iso_tp));
     info!("OBD2 services configured");
 
     let connector = match BleConnector::new(peripherals.BT, Default::default()) {
