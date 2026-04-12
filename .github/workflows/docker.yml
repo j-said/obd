@@ -16,7 +16,7 @@ on:
       push_image:
         description: 'Push image to registry (main branch only)'
         required: false
-        default: 'false'
+        default: false
         type: boolean
 
 env:
