@@ -30,8 +30,8 @@ use trouble_host::prelude::*;
 use obd_rust::application::handle_client;
 use obd_rust::can::{EspCanManager, IsoTpHandler, Obd2Service, SharedTwaiRx, SharedTwaiTx};
 use obd_rust::transport_io::ble::{
-    BleChannel, BleResources, ObdPeripheral, ObdRunner, ObdStack,
-    server::{create_advertisement, run_connection},
+    BleChannel, BleResources, DEVICE_NAME, ObdPeripheral, ObdRunner, ObdStack,
+    server::{ObdGattServer, create_advertisement, run_gatt_connection},
     stream::BleStream,
 };
 
@@ -40,6 +40,7 @@ static STREAM_RX: BleChannel = BleChannel::new();
 
 static BLE_STACK_RESOURCES: StaticCell<BleResources> = StaticCell::new();
 static BLE_STACK: StaticCell<ObdStack> = StaticCell::new();
+static GATT_SERVER: StaticCell<ObdGattServer<'static>> = StaticCell::new();
 
 static TWAI_TX: StaticCell<SharedTwaiTx> = StaticCell::new();
 static TWAI_RX: StaticCell<SharedTwaiRx> = StaticCell::new();
@@ -97,23 +98,22 @@ async fn main(spawner: Spawner) {
     let peripheral = host.peripheral;
     let runner = host.runner;
 
-    spawner
-        .spawn(ble_runner_task(runner)
-        .expect("Failed to spawn BLE runner task"));
+    spawner.spawn(ble_runner_task(runner).expect("Failed to spawn BLE runner task"));
     info!("BLE runner task started");
 
-    spawner
-        .spawn(ble_service_task(stack, peripheral, obd2)
-        .expect("Failed to spawn BLE service task"));
-    info!("BLE servise task started");
+    spawner.spawn(
+        ble_service_task(stack, peripheral, obd2).expect("Failed to spawn BLE service task"),
+    );
+    info!("BLE service task started");
 
     // -- End
 
+    info!("\n\nAll tasks spawned. Entering pending state.\n\n");
     pending::<()>().await;
-    info!("All tasks spawned. Entering pending state.");
+    unreachable!();
 }
 
-// Керує подіями HCI.
+// Handles HCI events.
 #[embassy_executor::task]
 async fn ble_runner_task(mut runner: ObdRunner) {
     info!("BLE Runner task is running...");
@@ -124,23 +124,29 @@ async fn ble_runner_task(mut runner: ObdRunner) {
 
 #[embassy_executor::task]
 async fn ble_service_task(
-    stack: &'static ObdStack,
+    _stack: &'static ObdStack,
     mut peripheral: ObdPeripheral,
     obd_service: &'static Obd2Service<EspCanManager<'static>>,
 ) {
     info!("BLE Service task started");
-    let mut adv_data = [0; 31];
 
-    let adv = match create_advertisement(&mut adv_data) {
-        Ok(a) => a,
-        Err(e) => {
-            error!("Failed to create advertisement: {:?}", e);
-            return;
-        }
-    };
+    let server =
+        GATT_SERVER.init(ObdGattServer::new_default(DEVICE_NAME).expect("GATT server init failed"));
+
+    let mut adv_buf = [0u8; 31];
+    let mut scan_buf = [0u8; 31];
 
     loop {
         info!("Starting advertisement...");
+        let adv = match create_advertisement(&mut adv_buf, &mut scan_buf) {
+            Ok(a) => a,
+            Err(e) => {
+                error!("Failed to create advertisement: {:?}", e);
+                embassy_time::Timer::after_secs(1).await;
+                continue;
+            }
+        };
+
         match peripheral.advertise(&Default::default(), adv).await {
             Ok(advertiser) => {
                 info!("Advertising. Waiting for connection...");
@@ -150,14 +156,14 @@ async fn ble_service_task(
 
                         let mut stream = BleStream::new(&STREAM_TX, &STREAM_RX);
 
-                        let l2cap_task = run_connection(stack, &conn, &STREAM_TX, &STREAM_RX);
+                        let gatt_task = run_gatt_connection(server, conn, &STREAM_TX, &STREAM_RX);
                         let app_task = handle_client(&mut stream, obd_service);
 
-                        match select(l2cap_task, app_task).await {
+                        match select(gatt_task, app_task).await {
                             Either::First(Err(e)) => {
-                                error!("Connection closed with error: {:?}", e)
+                                error!("GATT connection closed with error: {:?}", e)
                             }
-                            Either::First(Ok(_)) => info!("Connection closed normally (L2CAP)"),
+                            Either::First(Ok(_)) => info!("GATT connection closed normally"),
                             Either::Second(_) => info!("App task finished"),
                         }
                     }

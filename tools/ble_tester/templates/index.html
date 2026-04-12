@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WROOM-OBD Tester</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body { background: #f8f9fa; }
+
+    .log-box {
+      font-family: 'Courier New', monospace;
+      font-size: 0.82rem;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      border-radius: 6px;
+      padding: 10px 12px;
+      height: 260px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .log-box .ts { color: #6a9955; }
+    .log-box .entry-ok { color: #9cdcfe; }
+    .log-box .entry-err { color: #f48771; }
+    .log-box .entry-info { color: #d4d4d4; }
+
+    .status-dot {
+      display: inline-block;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #dc3545;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    .status-dot.connected { background: #28a745; }
+
+    .card-mode { border-left: 4px solid #0d6efd; }
+    .card-mode .card-header {
+      background: #e7f0ff;
+      font-weight: 600;
+      font-size: 0.9rem;
+      padding: 6px 12px;
+    }
+
+    .pid-valid { border-color: #28a745 !important; }
+    .pid-invalid { border-color: #dc3545 !important; }
+
+    #btn-send-pid:disabled { opacity: 0.5; }
+  </style>
+</head>
+
+<body>
+<div class="container-fluid py-3">
+
+  <!-- Header bar -->
+  <div class="d-flex align-items-center gap-3 mb-3 p-3 bg-white rounded shadow-sm">
+    <span class="fw-bold fs-5">WROOM-OBD Tester</span>
+    <input id="inp-address" type="text" class="form-control form-control-sm"
+           style="max-width:220px" placeholder="BLE address (or leave blank to scan)">
+    <button id="btn-connect" class="btn btn-sm btn-primary" onclick="doConnect()">Connect</button>
+    <button id="btn-disconnect" class="btn btn-sm btn-outline-secondary d-none" onclick="doDisconnect()">Disconnect</button>
+    <span id="status-badge" class="ms-2">
+      <span class="status-dot" id="dot"></span>
+      <span id="status-text">Disconnected</span>
+    </span>
+  </div>
+
+  <div class="row g-3">
+
+    <!-- Left: controls -->
+    <div class="col-lg-5">
+
+      <!-- Mode 01 -->
+      <div class="card card-mode mb-3">
+        <div class="card-header">Mode 01 — Live Data</div>
+        <div class="card-body py-2">
+          <div class="mb-2">
+            <label class="form-label mb-1 small">Regex validator</label>
+            <input id="inp-regex" type="text" class="form-control form-control-sm font-monospace"
+                   value="^(0x[0-9a-fA-F]{1,2}|[0-9]{1,3})$"
+                   oninput="validatePid()">
+          </div>
+          <div class="d-flex gap-2 align-items-start">
+            <div class="flex-grow-1">
+              <label class="form-label mb-1 small">PID (hex: 0x0C or decimal: 12)</label>
+              <input id="inp-pid" type="text" class="form-control form-control-sm"
+                     placeholder="e.g. 0x0C" oninput="validatePid()">
+            </div>
+            <div class="d-flex align-items-end" style="padding-bottom:1px">
+              <button id="btn-send-pid" class="btn btn-sm btn-primary mt-3" disabled
+                      onclick="sendMode01()">Send</button>
+            </div>
+          </div>
+          <div id="pid-feedback" class="form-text mt-1"></div>
+        </div>
+      </div>
+
+      <!-- Mode 03 -->
+      <div class="card card-mode mb-3" style="border-left-color:#fd7e14">
+        <div class="card-header" style="background:#fff3e0">Mode 03 — Stored DTCs</div>
+        <div class="card-body py-2">
+          <button class="btn btn-sm btn-warning" onclick="sendRequest('03')">Read Stored DTCs</button>
+        </div>
+      </div>
+
+      <!-- Mode 04 -->
+      <div class="card card-mode mb-3" style="border-left-color:#dc3545">
+        <div class="card-header" style="background:#fdecea">Mode 04 — Clear DTCs</div>
+        <div class="card-body py-2">
+          <button class="btn btn-sm btn-danger" onclick="confirmClear()">Clear DTCs</button>
+        </div>
+      </div>
+
+      <!-- Mode 09 -->
+      <div class="card card-mode" style="border-left-color:#198754">
+        <div class="card-header" style="background:#e8f5e9">Mode 09 — Vehicle Info</div>
+        <div class="card-body py-2">
+          <button class="btn btn-sm btn-success" onclick="sendRequest('09')">Get VIN</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Right: logs -->
+    <div class="col-lg-7">
+
+      <!-- BLE / Device logs -->
+      <div class="mb-1 d-flex justify-content-between align-items-center">
+        <span class="fw-semibold small text-muted">BLE / Device Logs</span>
+        <button class="btn btn-outline-secondary btn-sm py-0 px-2" onclick="clearLog('ble-log')">Clear</button>
+      </div>
+      <div id="ble-log" class="log-box mb-3"></div>
+
+      <!-- OBD Responses -->
+      <div class="mb-1 d-flex justify-content-between align-items-center">
+        <span class="fw-semibold small text-muted">OBD Responses</span>
+        <button class="btn btn-outline-secondary btn-sm py-0 px-2" onclick="clearLog('obd-log')">Clear</button>
+      </div>
+      <div id="obd-log" class="log-box"></div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  function appendEntry(boxId, ts, msg, cls) {
+    const box = document.getElementById(boxId);
+    const line = document.createElement('div');
+    line.innerHTML = `<span class="ts">[${ts}]</span> <span class="${cls}">${escHtml(msg)}</span>`;
+    box.appendChild(line);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function clearLog(boxId) {
+    document.getElementById(boxId).innerHTML = '';
+  }
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function logBle(ts, msg) { appendEntry('ble-log', ts, msg, 'entry-info'); }
+  function logObd(ts, msg) {
+    const cls = msg.includes('ERROR') ? 'entry-err' : 'entry-ok';
+    appendEntry('obd-log', ts, msg, cls);
+  }
+
+  // ── SSE ────────────────────────────────────────────────────────────────────
+
+  const evtSource = new EventSource('/api/stream');
+
+  evtSource.addEventListener('log', (e) => {
+    const d = JSON.parse(e.data);
+    logBle(d.time, d.msg);
+  });
+
+  evtSource.addEventListener('response', (e) => {
+    const d = JSON.parse(e.data);
+    logObd(d.time, d.msg);
+  });
+
+  evtSource.onerror = () => {
+    const ts = new Date().toTimeString().slice(0,8);
+    logBle(ts, 'SSE connection lost — retrying…');
+  };
+
+  // ── Status polling ─────────────────────────────────────────────────────────
+
+  function updateStatus(connected, device) {
+    document.getElementById('dot').className = 'status-dot' + (connected ? ' connected' : '');
+    document.getElementById('status-text').textContent = connected ? `Connected: ${device}` : 'Disconnected';
+    document.getElementById('btn-connect').classList.toggle('d-none', connected);
+    document.getElementById('btn-disconnect').classList.toggle('d-none', !connected);
+  }
+
+  setInterval(() => {
+    fetch('/api/status').then(r => r.json()).then(d => updateStatus(d.connected, d.device));
+  }, 2000);
+
+  // ── BLE connect / disconnect ───────────────────────────────────────────────
+
+  function doConnect() {
+    const address = document.getElementById('inp-address').value.trim() || null;
+    const btn = document.getElementById('btn-connect');
+    btn.disabled = true;
+    btn.textContent = 'Connecting…';
+
+    fetch('/api/connect', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({address})
+    })
+    .then(r => r.json())
+    .then(d => {
+      if (!d.ok) {
+        const ts = new Date().toTimeString().slice(0,8);
+        logBle(ts, `Connect failed: ${d.error || 'unknown'}`);
+      }
+    })
+    .finally(() => {
+      btn.disabled = false;
+      btn.textContent = 'Connect';
+    });
+  }
+
+  function doDisconnect() {
+    fetch('/api/disconnect', {method: 'POST'})
+      .then(r => r.json())
+      .then(() => updateStatus(false, ''));
+  }
+
+  // ── Mode 01 PID validation ─────────────────────────────────────────────────
+
+  function validatePid() {
+    const patternStr = document.getElementById('inp-regex').value.trim();
+    const pidStr = document.getElementById('inp-pid').value.trim();
+    const feedback = document.getElementById('pid-feedback');
+    const btn = document.getElementById('btn-send-pid');
+    const input = document.getElementById('inp-pid');
+
+    if (!pidStr) {
+      input.className = 'form-control form-control-sm';
+      feedback.textContent = '';
+      btn.disabled = true;
+      return;
+    }
+
+    let re;
+    try {
+      re = new RegExp(patternStr);
+    } catch {
+      feedback.textContent = 'Invalid regex pattern';
+      input.className = 'form-control form-control-sm pid-invalid';
+      btn.disabled = true;
+      return;
+    }
+
+    if (re.test(pidStr)) {
+      input.className = 'form-control form-control-sm pid-valid';
+      feedback.textContent = `✓ Valid — PID ${parsePid(pidStr)} (0x${parsePid(pidStr).toString(16).toUpperCase().padStart(2,'0')})`;
+      feedback.style.color = '#28a745';
+      btn.disabled = false;
+    } else {
+      input.className = 'form-control form-control-sm pid-invalid';
+      feedback.textContent = 'Does not match the regex pattern';
+      feedback.style.color = '#dc3545';
+      btn.disabled = true;
+    }
+  }
+
+  function parsePid(s) {
+    s = s.trim();
+    if (s.toLowerCase().startsWith('0x')) return parseInt(s, 16);
+    return parseInt(s, 10);
+  }
+
+  // ── OBD2 request ──────────────────────────────────────────────────────────
+
+  function sendMode01() {
+    const pidStr = document.getElementById('inp-pid').value.trim();
+    const pid = parsePid(pidStr);
+    if (isNaN(pid) || pid < 0 || pid > 255) {
+      alert('PID must be in range 0–255');
+      return;
+    }
+    sendRequest('01', pid);
+  }
+
+  function confirmClear() {
+    if (confirm('This will clear all DTCs from the ECU. Continue?')) {
+      sendRequest('04');
+    }
+  }
+
+  function sendRequest(mode, pid) {
+    const body = {mode};
+    if (pid !== undefined) body.pid = pid;
+
+    const ts = new Date().toTimeString().slice(0,8);
+    const label = pid !== undefined ? `Mode ${mode} PID 0x${pid.toString(16).toUpperCase().padStart(2,'0')}` : `Mode ${mode}`;
+    logBle(ts, `→ ${label}`);
+
+    fetch('/api/request', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    })
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) {
+        const t = new Date().toTimeString().slice(0,8);
+        logBle(t, `Request error: ${d.error}`);
+      }
+      // Formatted response arrives via SSE response_queue
+    })
+    .catch(err => {
+      const t = new Date().toTimeString().slice(0,8);
+      logBle(t, `Fetch error: ${err}`);
+    });
+  }
+</script>
+</body>
+</html>

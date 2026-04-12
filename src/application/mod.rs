@@ -1,6 +1,6 @@
 pub mod protocol;
 
-use crate::can::{AsyncCanDriver, Obd2Service, obd2::ECU_ENGINE_TX_ID};
+use crate::can::{AsyncCanDriver, Obd2Service, iso_tp::IsoTpError, obd2::ECU_ENGINE_TX_ID};
 use defmt::{info, warn};
 use embedded_io_async::{Read, Write};
 use protocol::{Command, DebugMsg, Request, Response, Status};
@@ -46,12 +46,12 @@ where
                         },
                         &mut out_buf,
                     ),
-                    Err(_) => serde_json_core::to_slice(
+                    Err(e) => serde_json_core::to_slice(
                         &Response::<()> {
                             id,
                             status: Status::Error,
                             data: None,
-                            debug: Some(DebugMsg::ObdTimeout),
+                            debug: Some(iso_tp_to_debug(e)),
                         },
                         &mut out_buf,
                     ),
@@ -67,19 +67,18 @@ where
                         },
                         &mut out_buf,
                     ),
-                    Err(_) => serde_json_core::to_slice(
+                    Err(e) => serde_json_core::to_slice(
                         &Response::<()> {
                             id,
                             status: Status::Error,
                             data: None,
-                            debug: Some(DebugMsg::LiveDataFailed),
+                            debug: Some(iso_tp_to_debug(e)),
                         },
                         &mut out_buf,
                     ),
                 },
-                Command::ClearDtcs => {
-                    let _ = obd_service.clear_dtcs().await;
-                    serde_json_core::to_slice(
+                Command::ClearDtcs => match obd_service.clear_dtcs().await {
+                    Ok(()) => serde_json_core::to_slice(
                         &Response::<()> {
                             id,
                             status: Status::Ok,
@@ -87,8 +86,17 @@ where
                             debug: None,
                         },
                         &mut out_buf,
-                    )
-                }
+                    ),
+                    Err(e) => serde_json_core::to_slice(
+                        &Response::<()> {
+                            id,
+                            status: Status::Error,
+                            data: None,
+                            debug: Some(iso_tp_to_debug(e)),
+                        },
+                        &mut out_buf,
+                    ),
+                },
                 Command::GetStoredDtcs => match obd_service.get_stored_dtcs().await {
                     Ok(data) => serde_json_core::to_slice(
                         &Response {
@@ -99,12 +107,12 @@ where
                         },
                         &mut out_buf,
                     ),
-                    Err(_) => serde_json_core::to_slice(
+                    Err(e) => serde_json_core::to_slice(
                         &Response::<()> {
                             id,
                             status: Status::Error,
                             data: None,
-                            debug: Some(DebugMsg::GetStoredDtcsFailed),
+                            debug: Some(iso_tp_to_debug(e)),
                         },
                         &mut out_buf,
                     ),
@@ -133,6 +141,20 @@ where
                 let _ = stream.write_all(&out_buf[..len]).await;
             }
         }
+    }
+}
+
+fn iso_tp_to_debug(e: IsoTpError) -> DebugMsg {
+    match e {
+        IsoTpError::TimeoutA => DebugMsg::IsoTpTimeoutA,
+        IsoTpError::TimeoutBs => DebugMsg::IsoTpTimeoutBs,
+        IsoTpError::TimeoutCr => DebugMsg::IsoTpTimeoutCr,
+        IsoTpError::WrongSn => DebugMsg::IsoTpWrongSn,
+        IsoTpError::InvalidFs => DebugMsg::IsoTpInvalidFs,
+        IsoTpError::WftOverrun => DebugMsg::IsoTpWftOverrun,
+        IsoTpError::BufferOverflow => DebugMsg::IsoTpBufferOverflow,
+        IsoTpError::DriverError => DebugMsg::IsoTpDriverError,
+        IsoTpError::InvalidId => DebugMsg::IsoTpInvalidId,
     }
 }
 
