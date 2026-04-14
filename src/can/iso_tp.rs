@@ -1,8 +1,8 @@
 use super::AsyncCanDriver;
 use defmt::{error, info};
 
-use esp_println as _;
 use esp_backtrace as _;
+use esp_println as _;
 
 use core::sync::atomic::{AtomicU8, Ordering};
 use embassy_time::{Duration, Instant, Timer, with_timeout};
@@ -226,15 +226,19 @@ impl<D: AsyncCanDriver> IsoTpHandler<D, Obd2IdMapper> {
         }
     }
     /// Construct in Extended addressing mode with the given target address byte.
-    pub fn with_target_addr(driver: D, target_addr: u8) -> () {
+    pub fn with_target_addr(&mut self, target_addr: u8) -> () {
         info!("enter: IsoTpHandler::with_target_addr");
         self.target_addr.store(target_addr, Ordering::Relaxed);
     }
 
     /// Switch to Extended addressing mode at runtime.
     pub fn to_extended_adr(&self, target_addr: u8) {
-        info!("enter: IsoTpHandler::to_extended_adr target_addr=0x{:02X}", target_addr);
-        self.addressing.store(AddressingMode::Extended as u8, Ordering::Relaxed);
+        info!(
+            "enter: IsoTpHandler::to_extended_adr target_addr=0x{:02X}",
+            target_addr
+        );
+        self.addressing
+            .store(AddressingMode::Extended as u8, Ordering::Relaxed);
         self.target_addr.store(target_addr, Ordering::Relaxed);
         self.mapper.to_extended_adr();
         info!("return: IsoTpHandler::to_extended_adr");
@@ -243,7 +247,8 @@ impl<D: AsyncCanDriver> IsoTpHandler<D, Obd2IdMapper> {
     /// Switch to Normal (11-bit) addressing mode at runtime.
     pub fn to_normal_addr(&self) {
         info!("enter: IsoTpHandler::to_normal_addr");
-        self.addressing.store(AddressingMode::Normal as u8, Ordering::Relaxed);
+        self.addressing
+            .store(AddressingMode::Normal as u8, Ordering::Relaxed);
         self.mapper.to_normal_addr();
         info!("return: IsoTpHandler::to_normal_addr");
     }
@@ -488,7 +493,10 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
             if frame.id() == target_id {
                 let result = self.dispatch_frame(state, &frame).await;
                 match &result {
-                    Ok(complete) => info!("return ok: IsoTpHandler::await_initial_frame complete={}", complete),
+                    Ok(complete) => info!(
+                        "return ok: IsoTpHandler::await_initial_frame complete={}",
+                        complete
+                    ),
                     Err(e) => error!("return err: IsoTpHandler::await_initial_frame {:?}", e),
                 }
                 return result;
@@ -607,10 +615,15 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
         )
         .await;
         if res.is_empty() {
-            error!("return err: IsoTpHandler::receive_functional_responses TimeoutCr (no responses)");
+            error!(
+                "return err: IsoTpHandler::receive_functional_responses TimeoutCr (no responses)"
+            );
             Err(IsoTpError::TimeoutCr)
         } else {
-            info!("return ok: IsoTpHandler::receive_functional_responses count={}", res.len());
+            info!(
+                "return ok: IsoTpHandler::receive_functional_responses count={}",
+                res.len()
+            );
             Ok(res)
         }
     }
@@ -713,7 +726,11 @@ impl<D: AsyncCanDriver, M: IdMapper> IsoTpHandler<D, M> {
             }
             match FlowStatus::from_pci_byte(d[o])? {
                 FlowStatus::ContinueToSend => {
-                    info!("return ok: IsoTpHandler::await_flow_control CTS bs={} stmin={}", d[o + 1], d[o + 2]);
+                    info!(
+                        "return ok: IsoTpHandler::await_flow_control CTS bs={} stmin={}",
+                        d[o + 1],
+                        d[o + 2]
+                    );
                     return Ok((d[o + 1], d[o + 2]));
                 }
                 FlowStatus::Wait => {
@@ -777,20 +794,24 @@ pub struct Obd2IdMapper {
 impl Obd2IdMapper {
     pub fn new(addressing: AddressingMode) -> Self {
         info!("enter: Obd2IdMapper::new");
-        Self { addressing: AtomicU8::new(addressing as u8) }
+        Self {
+            addressing: AtomicU8::new(addressing as u8),
+        }
     }
 
     /// Switch to Extended (29-bit) addressing mode at runtime.
     pub fn to_extended_adr(&self) {
         info!("enter: Obd2IdMapper::to_extended_adr");
-        self.addressing.store(AddressingMode::Extended as u8, Ordering::Relaxed);
+        self.addressing
+            .store(AddressingMode::Extended as u8, Ordering::Relaxed);
         info!("return: Obd2IdMapper::to_extended_adr");
     }
 
     /// Switch to Normal (11-bit) addressing mode at runtime.
     pub fn to_normal_addr(&self) {
         info!("enter: Obd2IdMapper::to_normal_addr");
-        self.addressing.store(AddressingMode::Normal as u8, Ordering::Relaxed);
+        self.addressing
+            .store(AddressingMode::Normal as u8, Ordering::Relaxed);
         info!("return: Obd2IdMapper::to_normal_addr");
     }
 
