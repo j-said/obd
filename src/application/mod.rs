@@ -1,6 +1,6 @@
 pub mod protocol;
 
-use crate::can::{AsyncCanDriver, Obd2Service, obd2::ECU_ENGINE_TX_ID};
+use crate::can::{AsyncCanDriver, Obd2Service, iso_tp::IsoTpError, obd2::ECU_ENGINE_TX_ID};
 use defmt::{info, warn};
 use embedded_io_async::{Read, Write};
 use protocol::{Command, DebugMsg, Request, Response, Status};
@@ -25,13 +25,11 @@ where
             break;
         }
 
-        // --- ЛОГУВАННЯ ВХІДНИХ ДАНИХ ---
         if let Ok(raw_str) = core::str::from_utf8(&in_buf[..n]) {
             info!("RX ({} bytes): {}", n, raw_str);
         } else {
-            info!("RX ({} bytes): <Binary data>", n);
+            warn!("RX ({} bytes): Decoding failed", n);
         }
-        // ------------------------------
 
         if let Ok((req, _)) = serde_json_core::from_slice::<Request>(&in_buf[..n]) {
             let id = req.id;
@@ -48,12 +46,12 @@ where
                         },
                         &mut out_buf,
                     ),
-                    Err(_) => serde_json_core::to_slice(
+                    Err(e) => serde_json_core::to_slice(
                         &Response::<()> {
                             id,
                             status: Status::Error,
                             data: None,
-                            debug: Some(DebugMsg::ObdTimeout),
+                            debug: Some(iso_tp_to_debug(e)),
                         },
                         &mut out_buf,
                     ),
@@ -69,19 +67,18 @@ where
                         },
                         &mut out_buf,
                     ),
-                    Err(_) => serde_json_core::to_slice(
+                    Err(e) => serde_json_core::to_slice(
                         &Response::<()> {
                             id,
                             status: Status::Error,
                             data: None,
-                            debug: Some(DebugMsg::LiveDataFailed),
+                            debug: Some(iso_tp_to_debug(e)),
                         },
                         &mut out_buf,
                     ),
                 },
-                Command::ClearDtcs => {
-                    let _ = obd_service.clear_dtcs().await;
-                    serde_json_core::to_slice(
+                Command::ClearDtcs => match obd_service.clear_dtcs().await {
+                    Ok(()) => serde_json_core::to_slice(
                         &Response::<()> {
                             id,
                             status: Status::Ok,
@@ -89,8 +86,17 @@ where
                             debug: None,
                         },
                         &mut out_buf,
-                    )
-                }
+                    ),
+                    Err(e) => serde_json_core::to_slice(
+                        &Response::<()> {
+                            id,
+                            status: Status::Error,
+                            data: None,
+                            debug: Some(iso_tp_to_debug(e)),
+                        },
+                        &mut out_buf,
+                    ),
+                },
                 Command::GetStoredDtcs => match obd_service.get_stored_dtcs().await {
                     Ok(data) => serde_json_core::to_slice(
                         &Response {
@@ -101,12 +107,12 @@ where
                         },
                         &mut out_buf,
                     ),
-                    Err(_) => serde_json_core::to_slice(
+                    Err(e) => serde_json_core::to_slice(
                         &Response::<()> {
                             id,
                             status: Status::Error,
                             data: None,
-                            debug: Some(DebugMsg::GetStoredDtcsFailed),
+                            debug: Some(iso_tp_to_debug(e)),
                         },
                         &mut out_buf,
                     ),
@@ -114,6 +120,11 @@ where
             };
 
             if let Ok(len) = ser_result {
+                if let Ok(raw_str) = core::str::from_utf8(&out_buf[..len]) {
+                    info!("TX ({} bytes): {}", len, raw_str);
+                } else {
+                    warn!("TX ({} bytes): Decoding failed", len);
+                }
                 let _ = stream.write_all(&out_buf[..len]).await;
             }
         } else {
@@ -126,9 +137,24 @@ where
                 },
                 &mut out_buf,
             ) {
+                info!("TX ({} bytes): {}", len, "Invalid request format");
                 let _ = stream.write_all(&out_buf[..len]).await;
             }
         }
+    }
+}
+
+fn iso_tp_to_debug(e: IsoTpError) -> DebugMsg {
+    match e {
+        IsoTpError::TimeoutA => DebugMsg::IsoTpTimeoutA,
+        IsoTpError::TimeoutBs => DebugMsg::IsoTpTimeoutBs,
+        IsoTpError::TimeoutCr => DebugMsg::IsoTpTimeoutCr,
+        IsoTpError::WrongSn => DebugMsg::IsoTpWrongSn,
+        IsoTpError::InvalidFs => DebugMsg::IsoTpInvalidFs,
+        IsoTpError::WftOverrun => DebugMsg::IsoTpWftOverrun,
+        IsoTpError::BufferOverflow => DebugMsg::IsoTpBufferOverflow,
+        IsoTpError::DriverError => DebugMsg::IsoTpDriverError,
+        IsoTpError::InvalidId => DebugMsg::IsoTpInvalidId,
     }
 }
 

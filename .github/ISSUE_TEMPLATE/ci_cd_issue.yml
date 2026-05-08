@@ -1,0 +1,49 @@
+---
+name: CI / CD Issue
+description: Report a problem with a GitHub Actions workflow or build pipeline
+title: "[CI/CD]: "
+labels: ["ci/cd", "triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to report failures or propose improvements for CI/CD workflows.
+
+  - type: dropdown
+    id: workflow
+    attributes:
+      label: Affected Workflow
+      options:
+        - Continuous Integration (rust_ci.yml)
+        - Docker Build (docker.yml)
+        - Security Audit (security-audit.yml)
+        - Auto Assign (auto-assign.yml)
+        - Auto Label (auto-label.yml)
+        - Stale Management (stale.yml)
+        - Daily Report (daily-report.yml)
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: run-url
+    attributes:
+      label: Failed Run URL
+      description: Link to the failed workflow run (if applicable)
+      placeholder: "https://github.com/wroom-code-base/firmware/actions/runs/…"
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the issue or improvement.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Log Output
+      render: text
