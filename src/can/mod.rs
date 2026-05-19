@@ -11,6 +11,7 @@ use esp_hal::twai::{EspTwaiFrame, TwaiRx, TwaiTx};
 
 pub use iso_tp::IsoTpHandler;
 pub use obd2::Obd2Service;
+pub type SharedObd2Service<D> = Mutex<CriticalSectionRawMutex, Obd2Service<D>>;
 
 #[allow(async_fn_in_trait)]
 pub trait AsyncCanDriver {

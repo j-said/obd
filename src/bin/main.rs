@@ -10,9 +10,12 @@ use esp_println as _;
 
 // Embassy core
 use core::future::pending;
+use core::sync::atomic::{AtomicBool, Ordering};
 use embassy_executor::Spawner;
 use embassy_futures::select::{Either, select};
-use embassy_sync::mutex::Mutex;
+use embassy_sync::{
+    mutex::Mutex,
+};
 use esp_hal::{
     clock::CpuClock,
     interrupt::software,
@@ -27,8 +30,13 @@ use esp_radio::ble::controller::BleConnector;
 use trouble_host::prelude::*;
 
 // Self imports
-use obd_rust::application::handle_client;
-use obd_rust::can::{EspCanManager, IsoTpHandler, Obd2Service, SharedTwaiRx, SharedTwaiTx};
+use esp_bootloader_esp_idf::partitions::{self, DataPartitionSubType, PartitionType};
+use esp_storage::FlashStorage;
+use obd_rust::application::{
+    handle_client,
+    offline_service::{run_offline_scanner, send_cached_snapshot, PidTelemetryStore, SharedPidCache},
+};
+use obd_rust::can::{EspCanManager, IsoTpHandler, Obd2Service, SharedObd2Service, SharedTwaiRx, SharedTwaiTx};
 use obd_rust::transport_io::ble::{
     BleChannel, BleResources, DEVICE_NAME, ObdPeripheral, ObdRunner, ObdStack,
     server::{ObdGattServer, create_advertisement, run_gatt_connection},
@@ -44,7 +52,9 @@ static GATT_SERVER: StaticCell<ObdGattServer<'static>> = StaticCell::new();
 
 static TWAI_TX: StaticCell<SharedTwaiTx> = StaticCell::new();
 static TWAI_RX: StaticCell<SharedTwaiRx> = StaticCell::new();
-static OBD_SERVICE: StaticCell<Obd2Service<EspCanManager<'static>>> = StaticCell::new();
+static OBD_SERVICE: StaticCell<SharedObd2Service<EspCanManager<'static>>> = StaticCell::new();
+static PID_CACHE: StaticCell<SharedPidCache> = StaticCell::new();
+static CLIENT_CONNECTED: AtomicBool = AtomicBool::new(false);
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -79,8 +89,25 @@ async fn main(spawner: Spawner) {
 
     let can_manager = EspCanManager::new(tx_shared, rx_shared);
     let iso_tp = IsoTpHandler::new(can_manager);
-    let obd2 = OBD_SERVICE.init(Obd2Service::new(iso_tp));
+    let obd2 = OBD_SERVICE.init(Mutex::new(Obd2Service::new(iso_tp)));
     info!("OBD2 services configured");
+
+    let mut flash = FlashStorage::new(peripherals.FLASH);
+    let mut partition_buffer = [0u8; partitions::PARTITION_TABLE_MAX_LEN];
+    let partition_table = partitions::read_partition_table(&mut flash, &mut partition_buffer)
+        .expect("Failed to read partition table");
+    let cache_partition = partition_table
+        .find_partition(PartitionType::Data(DataPartitionSubType::Nvs))
+        .expect("Failed to locate NVS partition")
+        .expect("NVS partition missing");
+    let cache_offset = cache_partition.offset();
+    let cache_size = cache_partition.len() as usize;
+    let telemetry_cache = PID_CACHE.init(Mutex::new(PidTelemetryStore::new(
+        flash,
+        cache_offset,
+        cache_size,
+    )));
+    info!("PID cache partition located at 0x{:08X} ({} bytes)", cache_offset, cache_size);
 
     let connector = match BleConnector::new(peripherals.BT, Default::default()) {
         Ok(c) => c,
@@ -101,8 +128,11 @@ async fn main(spawner: Spawner) {
     spawner.spawn(ble_runner_task(runner).expect("Failed to spawn BLE runner task"));
     info!("BLE runner task started");
 
+    spawner.spawn(offline_pid_cache_task(obd2, telemetry_cache).expect("Failed to spawn offline PID cache task"));
+    info!("Offline PID cache task started");
+
     spawner.spawn(
-        ble_service_task(stack, peripheral, obd2).expect("Failed to spawn BLE service task"),
+        ble_service_task(stack, peripheral, obd2, telemetry_cache).expect("Failed to spawn BLE service task"),
     );
     info!("BLE service task started");
 
@@ -126,7 +156,8 @@ async fn ble_runner_task(mut runner: ObdRunner) {
 async fn ble_service_task(
     _stack: &'static ObdStack,
     mut peripheral: ObdPeripheral,
-    obd_service: &'static Obd2Service<EspCanManager<'static>>,
+    obd_service: &'static SharedObd2Service<EspCanManager<'static>>,
+    telemetry_cache: &'static SharedPidCache,
 ) {
     info!("BLE Service task started");
 
@@ -153,8 +184,13 @@ async fn ble_service_task(
                 match advertiser.accept().await {
                     Ok(conn) => {
                         info!("Device connected!");
+                        CLIENT_CONNECTED.store(true, Ordering::Release);
 
                         let mut stream = BleStream::new(&STREAM_TX, &STREAM_RX);
+
+                        if let Err(e) = send_cached_snapshot(&mut stream, telemetry_cache).await {
+                            error!("Failed to send cached PID snapshot: {:?}", e);
+                        }
 
                         let gatt_task = run_gatt_connection(server, conn, &STREAM_TX, &STREAM_RX);
                         let app_task = handle_client(&mut stream, obd_service);
@@ -166,8 +202,11 @@ async fn ble_service_task(
                             Either::First(Ok(_)) => info!("GATT connection closed normally"),
                             Either::Second(_) => info!("App task finished"),
                         }
+
+                        CLIENT_CONNECTED.store(false, Ordering::Release);
                     }
                     Err(e) => error!("Accept error: {:?}", e),
+
                 }
             }
             Err(e) => {
@@ -176,6 +215,14 @@ async fn ble_service_task(
             }
         }
     }
+}
+
+#[embassy_executor::task]
+async fn offline_pid_cache_task(
+    obd_service: &'static SharedObd2Service<EspCanManager<'static>>,
+    telemetry_cache: &'static SharedPidCache,
+) {
+    run_offline_scanner(&CLIENT_CONNECTED, obd_service, telemetry_cache).await;
 }
 
 // TODO: Add logic to switch the CAN is_extended flag based on the ECU responses if needed in the future.

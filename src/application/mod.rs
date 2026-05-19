@@ -1,11 +1,12 @@
 pub mod protocol;
+pub mod offline_service;
 
-use crate::can::{AsyncCanDriver, Obd2Service, iso_tp::IsoTpError, obd2::ECU_ENGINE_TX_ID};
+use crate::can::{AsyncCanDriver, SharedObd2Service, iso_tp::IsoTpError, obd2::ECU_ENGINE_TX_ID};
 use defmt::{info, warn};
 use embedded_io_async::{Read, Write};
 use protocol::{Command, DebugMsg, Request, Response, Status};
 
-pub async fn handle_client<S, D>(mut stream: S, obd_service: &Obd2Service<D>)
+pub async fn handle_client<S, D>(mut stream: S, obd_service: &'static SharedObd2Service<D>)
 where
     S: Read + Write,
     D: AsyncCanDriver,
@@ -36,87 +37,110 @@ where
             info!("Parsed request ID: {}", id);
 
             let ser_result = match req.cmd {
-                Command::GetVin => match obd_service.get_vin(ECU_ENGINE_TX_ID).await {
-                    Ok(vin) => serde_json_core::to_slice(
-                        &Response {
-                            id,
-                            status: Status::Ok,
-                            data: Some(&*vin),
-                            debug: None,
-                        },
-                        &mut out_buf,
-                    ),
-                    Err(e) => serde_json_core::to_slice(
-                        &Response::<()> {
-                            id,
-                            status: Status::Error,
-                            data: None,
-                            debug: Some(iso_tp_to_debug(e)),
-                        },
-                        &mut out_buf,
-                    ),
-                },
-                Command::GetLiveData { pid } => match obd_service.get_broadcast_livedata(pid).await
-                {
-                    Ok(data) => serde_json_core::to_slice(
-                        &Response {
-                            id,
-                            status: Status::Ok,
-                            data: Some(&data),
-                            debug: None,
-                        },
-                        &mut out_buf,
-                    ),
-                    Err(e) => serde_json_core::to_slice(
-                        &Response::<()> {
-                            id,
-                            status: Status::Error,
-                            data: None,
-                            debug: Some(iso_tp_to_debug(e)),
-                        },
-                        &mut out_buf,
-                    ),
-                },
-                Command::ClearDtcs => match obd_service.clear_dtcs().await {
-                    Ok(()) => serde_json_core::to_slice(
-                        &Response::<()> {
-                            id,
-                            status: Status::Ok,
-                            data: None,
-                            debug: None,
-                        },
-                        &mut out_buf,
-                    ),
-                    Err(e) => serde_json_core::to_slice(
-                        &Response::<()> {
-                            id,
-                            status: Status::Error,
-                            data: None,
-                            debug: Some(iso_tp_to_debug(e)),
-                        },
-                        &mut out_buf,
-                    ),
-                },
-                Command::GetStoredDtcs => match obd_service.get_stored_dtcs().await {
-                    Ok(data) => serde_json_core::to_slice(
-                        &Response {
-                            id,
-                            status: Status::Ok,
-                            data: Some(&data),
-                            debug: None,
-                        },
-                        &mut out_buf,
-                    ),
-                    Err(e) => serde_json_core::to_slice(
-                        &Response::<()> {
-                            id,
-                            status: Status::Error,
-                            data: None,
-                            debug: Some(iso_tp_to_debug(e)),
-                        },
-                        &mut out_buf,
-                    ),
-                },
+                Command::GetVin => {
+                    let vin_result = {
+                        let service = obd_service.lock().await;
+                        service.get_vin(ECU_ENGINE_TX_ID).await
+                    };
+                    match vin_result {
+                        Ok(vin) => serde_json_core::to_slice(
+                            &Response {
+                                id,
+                                status: Status::Ok,
+                                data: Some(&*vin),
+                                debug: None,
+                            },
+                            &mut out_buf,
+                        ),
+                        Err(e) => serde_json_core::to_slice(
+                            &Response::<()> {
+                                id,
+                                status: Status::Error,
+                                data: None,
+                                debug: Some(iso_tp_to_debug(e)),
+                            },
+                            &mut out_buf,
+                        ),
+                    }
+                }
+                Command::GetLiveData { pid } => {
+                    let live_result = {
+                        let service = obd_service.lock().await;
+                        service.get_broadcast_livedata(pid).await
+                    };
+                    match live_result {
+                        Ok(data) => serde_json_core::to_slice(
+                            &Response {
+                                id,
+                                status: Status::Ok,
+                                data: Some(&data),
+                                debug: None,
+                            },
+                            &mut out_buf,
+                        ),
+                        Err(e) => serde_json_core::to_slice(
+                            &Response::<()> {
+                                id,
+                                status: Status::Error,
+                                data: None,
+                                debug: Some(iso_tp_to_debug(e)),
+                            },
+                            &mut out_buf,
+                        ),
+                    }
+                }
+                Command::ClearDtcs => {
+                    let clear_result = {
+                        let service = obd_service.lock().await;
+                        service.clear_dtcs().await
+                    };
+                    match clear_result {
+                        Ok(()) => serde_json_core::to_slice(
+                            &Response::<()> {
+                                id,
+                                status: Status::Ok,
+                                data: None,
+                                debug: None,
+                            },
+                            &mut out_buf,
+                        ),
+                        Err(e) => serde_json_core::to_slice(
+                            &Response::<()> {
+                                id,
+                                status: Status::Error,
+                                data: None,
+                                debug: Some(iso_tp_to_debug(e)),
+                            },
+                            &mut out_buf,
+                        ),
+                    }
+                }
+                Command::GetStoredDtcs => {
+                    let dtc_result = {
+                        let service = obd_service.lock().await;
+                        service.get_stored_dtcs().await
+                    };
+                    match dtc_result {
+                        Ok(data) => serde_json_core::to_slice(
+                            &Response {
+                                id,
+                                status: Status::Ok,
+                                data: Some(&data),
+                                debug: None,
+                            },
+                            &mut out_buf,
+                        ),
+                        Err(e) => serde_json_core::to_slice(
+                            &Response::<()> {
+                                id,
+                                status: Status::Error,
+                                data: None,
+                                debug: Some(iso_tp_to_debug(e)),
+                            },
+                            &mut out_buf,
+                        ),
+                    }
+                }
             };
 
             if let Ok(len) = ser_result {
